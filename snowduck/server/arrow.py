@@ -18,11 +18,12 @@ def to_sf_schema(schema: pa.Schema, rowtype: list[ColumnInfo]) -> pa.Schema:
         pa.Schema: A Snowflake-compatible schema.
 
     Raises:
-        AssertionError: If schema and rowtype lengths do not match.
+        ValueError: If schema and rowtype lengths do not match.
     """
-    assert len(schema) == len(rowtype), (
-        f"Schema and rowtype must have the same length: {len(schema)=}, {len(rowtype)=}"
-    )
+    if len(schema) != len(rowtype):
+        raise ValueError(
+            f"Schema and rowtype must have the same length: {len(schema)=}, {len(rowtype)=}"
+        )
 
     def sf_field(field: pa.Field, column: ColumnInfo) -> pa.Field:
         """
@@ -143,7 +144,8 @@ def timestamp_to_sf_struct(ts: pa.Array | pa.ChunkedArray) -> pa.Array:
     fraction = pc.multiply(pc.subsecond(ts), 1_000_000_000).cast(pa.int32())
 
     if ts.type.tz:
-        assert ts.type.tz == "UTC", f"Timezone {ts.type.tz} not supported"
+        if ts.type.tz != "UTC":
+            raise ValueError(f"Unsupported timezone: {ts.type.tz}. Only UTC is supported.")
         timezone = pa.array([1440] * len(ts), type=pa.int32())
 
         return pa.StructArray.from_arrays(

@@ -14,7 +14,8 @@ from snowduck.dialect.transforms import (
 def test_create_transformation(dialect_context):
     expression = parse_one("CREATE DATABASE foo", read="snowflake")
     transformed_sql = transform_create(expression, context=dialect_context)
-    assert transformed_sql == "ATTACH DATABASE ':memory:' AS foo"
+    # Unquoted identifiers are uppercased to match Snowflake behavior
+    assert transformed_sql == "ATTACH DATABASE ':memory:' AS FOO"
 
 
 def test_describe_transformation(dialect_context):

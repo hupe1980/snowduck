@@ -40,22 +40,44 @@ def test_file_based_persistence():
                 assert results[1] == (2, "Bob")
 
 
-def test_in_memory_isolation():
-    """Test that in-memory connections are isolated."""
+def test_in_memory_shared_state():
+    """Test that in-memory connections within same patch context share state (like Snowflake)."""
     with patch_snowflake():
         import snowflake.connector
 
         # First connection
         with snowflake.connector.connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE test_isolated (id INT)")
-            cursor.execute("INSERT INTO test_isolated VALUES (1)")
+            cursor.execute("CREATE TABLE test_shared (id INT)")
+            cursor.execute("INSERT INTO test_shared VALUES (1)")
 
-        # Second connection - table should NOT exist (new in-memory DB)
+        # Second connection - table SHOULD exist (shared state like Snowflake)
+        with snowflake.connector.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM test_shared")
+            result = cursor.fetchone()
+            assert result[0] == 1
+
+
+def test_separate_patches_are_isolated():
+    """Test that separate patch_snowflake() contexts are isolated."""
+    # First patch context
+    with patch_snowflake():
+        import snowflake.connector
+
+        with snowflake.connector.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE isolated_test (id INT)")
+            cursor.execute("INSERT INTO isolated_test VALUES (42)")
+
+    # Second patch context - should NOT see the table from first context
+    with patch_snowflake():
+        import snowflake.connector
+
         with snowflake.connector.connect() as conn:
             cursor = conn.cursor()
             with pytest.raises(Exception, match="does not exist"):
-                cursor.execute("SELECT * FROM test_isolated")
+                cursor.execute("SELECT * FROM isolated_test")
 
 
 def test_multiple_connections_to_same_file():

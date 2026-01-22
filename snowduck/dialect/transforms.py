@@ -45,16 +45,26 @@ def transform_set(expression: exp.Expression, context: DialectContext) -> str:
 
 
 def transform_create(expression: exp.Create, context: DialectContext) -> str:
-    """Custom transformation for CREATE DATABASE to ATTACH DATABASE."""
-    if str(expression.args.get("kind")).upper() == "DATABASE":
+    """Custom transformation for CREATE DATABASE/SCHEMA to use uppercase identifiers."""
+    kind = str(expression.args.get("kind")).upper()
+    
+    if kind == "DATABASE":
         ident = expression.find(exp.Identifier)
-        assert ident, f"No identifier in {expression.sql}"
+        if not ident:
+            raise ValueError(f"No identifier found in CREATE DATABASE statement: {expression.sql}")
 
-        db_name = ident.this
+        # Use uppercase for unquoted identifiers to match Snowflake behavior
+        db_name = ident.this if ident.quoted else ident.this.upper()
         db_file = ":memory:"
         if_not_exists = "IF NOT EXISTS " if expression.args.get("exists") else ""
 
         return f"ATTACH {if_not_exists}DATABASE '{db_file}' AS {db_name}"
+
+    if kind == "SCHEMA":
+        ident = expression.find(exp.Identifier)
+        if ident and not ident.quoted:
+            # Uppercase unquoted schema names to match Snowflake behavior
+            ident.set("this", ident.this.upper())
 
     return expression.sql(dialect="duckdb")
 
@@ -65,9 +75,18 @@ def transform_describe(expression: exp.Describe, context: DialectContext) -> str
             database = table.catalog or context.current_database
             schema = table.db or context.current_schema
 
-            assert database, f"Database must be specified for table '{table.name}'"
-            assert schema, f"Schema must be specified for table '{table.name}'"
-            assert table.name, f"Table name must be specified for table '{table.name}'"
+            if not database:
+                raise ValueError(
+                    f"No database context for DESCRIBE {table.name}. "
+                    f"Use 'USE DATABASE <db>' or specify database explicitly."
+                )
+            if not schema:
+                raise ValueError(
+                    f"No schema context for DESCRIBE {table.name}. "
+                    f"Use 'USE SCHEMA <schema>' or specify schema explicitly."
+                )
+            if not table.name:
+                raise ValueError("Table name must be specified for DESCRIBE")
 
             if (
                 schema
@@ -101,7 +120,11 @@ def transform_use(expression: exp.Use, context: DialectContext) -> str:
             else context.current_database
         )
         schema = expression.this.name
-        assert db_name, f"Database must be specified for schema '{schema}'"
+        if not db_name:
+            raise ValueError(
+                f"No database context for schema '{schema}'. "
+                f"Use 'USE DATABASE <db>' first or specify database explicitly."
+            )
 
         return f"SET schema = '{db_name}.{schema}'"
 

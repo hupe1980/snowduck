@@ -1,1 +1,2 @@
-snowduck_examples.*
+*.duckdb
+*.duckdb.wal

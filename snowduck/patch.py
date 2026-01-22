@@ -121,10 +121,14 @@ def start_patch_snowflake(db_file: str = ":memory:", reset: bool = False):
         start_patch_snowflake(db_file='test.duckdb', reset=True)
     """
     global _patch_ctx
-    if _patch_ctx is None:  # Ensure we don't register multiple times
-        _patch_ctx = patch_snowflake(db_file=db_file, reset=reset)
-        _patch_ctx.__enter__()
-        atexit.register(stop_patch_snowflake)  # Register cleanup when starting
+    
+    # If there's an existing patch context, stop it first
+    if _patch_ctx is not None:
+        stop_patch_snowflake()
+    
+    _patch_ctx = patch_snowflake(db_file=db_file, reset=reset)
+    _patch_ctx.__enter__()
+    atexit.register(stop_patch_snowflake)  # Register cleanup when starting
 
 
 def stop_patch_snowflake():

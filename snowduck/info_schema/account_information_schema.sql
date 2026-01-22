@@ -1,5 +1,17 @@
 CREATE SCHEMA IF NOT EXISTS {account_catalog_name}.{info_schema_name};
 
+-- View to support information_schema.databases queries
+CREATE VIEW IF NOT EXISTS {account_catalog_name}.{info_schema_name}._DATABASES AS
+SELECT
+    UPPER(database_name) as database_name,
+    to_timestamp(0)::timestamptz as created_on,
+    'SYSADMIN' as owner,
+    '' as comment,
+    1 as retention_time,
+    'STANDARD' as type
+FROM duckdb_databases()
+WHERE database_name NOT IN ('memory', '{account_catalog_name}');
+
 CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._tables_ext (
     ext_table_catalog VARCHAR,
     ext_table_schema VARCHAR,

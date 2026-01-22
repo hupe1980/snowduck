@@ -5,6 +5,7 @@ from typing import Any
 from duckdb import DuckDBPyConnection
 
 from ..helper import load_sql
+from ..macros import register_macros
 
 ACCOUNT_CATALOG_NAME = "_snowduck_account"
 INFO_SCHEMA_NAME = "_information_schema"
@@ -113,6 +114,8 @@ class InfoSchemaManager:
                 database=database,
             )
             self._execute_sql(sql)
+            # Register Snowflake-compatible macros in the new database
+            register_macros(self._duck_conn, database=database)
 
         if schema:
             if not schema.isidentifier():
@@ -134,7 +137,7 @@ class InfoSchemaManager:
 
     def describe_table_sql(self, database: str, schema: str, table: str) -> str:
         return load_sql(
-            self._get_filepath("database_information_schema.sql"),
+            self._get_filepath("describe_table.sql"),
             account_catalog_name=self.account_catalog_name,
             info_schema_name=self.info_schema_name,
             database=database,

@@ -5,12 +5,16 @@ from sqlglot.dialects import DuckDB
 
 from .context import DialectContext
 from .preprocess import (
+    preprocess_bitwise,
     preprocess_current_schema,
+    preprocess_date_functions,
     preprocess_generator,
     preprocess_identifier,
     preprocess_info_schema,
+    preprocess_regexp_replace,
     preprocess_semi_structured,
     preprocess_seq_functions,
+    preprocess_special_expressions,
     preprocess_system_calls,
     preprocess_variables,
 )
@@ -84,6 +88,14 @@ class Dialect(DuckDB):
         return sql
 
     class Generator(DuckDB.Generator):
+        # Type mappings for Snowflake types that don't exist in DuckDB
+        TYPE_MAPPING = {
+            **DuckDB.Generator.TYPE_MAPPING,
+            exp.DataType.Type.ARRAY: "JSON",  # Snowflake ARRAY -> DuckDB JSON (flexible container)
+            exp.DataType.Type.VARIANT: "JSON",  # Snowflake VARIANT -> DuckDB JSON
+            exp.DataType.Type.OBJECT: "JSON",  # Snowflake OBJECT -> DuckDB JSON
+        }
+
         # Extend the TRANSFORMS dictionary to include the custom transformation
         TRANSFORMS = {
             **DuckDB.Generator.TRANSFORMS,  # Include existing DuckDB transforms
@@ -127,5 +139,19 @@ class Dialect(DuckDB):
             )
             expression = expression.transform(
                 preprocess_seq_functions, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_bitwise, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_regexp_replace, context=self._context
+            )
+            # Date function preprocessing must run BEFORE preprocess_special_expressions
+            # to cast string literals to DATE before ADD_MONTHS etc. are transformed
+            expression = expression.transform(
+                preprocess_date_functions, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_special_expressions, context=self._context
             )
             return super().preprocess(expression)

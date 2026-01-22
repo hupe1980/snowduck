@@ -9,12 +9,6 @@
 
 SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavior for development and testing. Write and test Snowflake SQL locally without cloud access or costs.
 
-**Recent Improvements:**
-- ✅ **Zero linting errors** - Professional, clean codebase
-- ✅ **Modern CI/CD** - PyPI Trusted Publishers with package attestations
-- ✅ **128 tests passing** in <2s - Fast, comprehensive test suite
-- ✅ **Production-ready** for development & testing
-
 ## Why SnowDuck?
 
 - 🚀 **Fast Development** - Test SQL queries instantly without waiting for cloud connections
@@ -25,31 +19,64 @@ SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavi
 
 ## Features
 
-| Feature | Support |
-|---------|---------|
-| DDL Operations | ✅ CREATE/DROP DATABASE, SCHEMA, TABLE |
-| String Functions | ✅ UPPER, LOWER, CONCAT, LENGTH, SUBSTRING |
-| Aggregate Functions | ✅ COUNT, SUM, AVG, MIN, MAX, GROUP BY |
-| Window Functions | ✅ ROW_NUMBER, RANK, DENSE_RANK, PARTITION BY |
-| Session Variables | ✅ SET/SELECT $variable syntax |
-| Information Schema | ✅ Query metadata (databases, tables, columns) |
-| Advanced SQL | ✅ CTEs, JOINs, subqueries, CASE statements || Arrow/REST Server | ✅ HTTP API with Arrow IPC format || Snowflake Functions | 🚧 90%+ compatibility, growing |
+### Core SQL Support
 
-> **Note**: SnowDuck is experimental. Use for development/testing only, not production workloads.
+| Category | Functions |
+|----------|-----------|
+| **DDL Operations** | CREATE/DROP DATABASE, SCHEMA, TABLE |
+| **DML Operations** | INSERT, UPDATE, DELETE, MERGE |
+| **Advanced SQL** | CTEs, JOINs, subqueries, CASE, QUALIFY |
+| **Session Variables** | SET/SELECT \$variable syntax |
+| **Information Schema** | Query metadata (databases, tables, columns) |
+
+### Function Support
+
+| Category | Functions |
+|----------|-----------|
+| **String** | CONCAT, CONCAT_WS, SPLIT, SPLIT_PART, CONTAINS, REPLACE, TRIM, LTRIM, RTRIM, LPAD, RPAD, SPACE, STRTOK, TRANSLATE, REVERSE, STARTSWITH, ENDSWITH, ASCII, CHR, INITCAP, SOUNDEX, UPPER, LOWER, LENGTH, LEN, SUBSTR, SUBSTRING, INSTR, POSITION |
+| **Date/Time** | DATEADD, DATEDIFF, TIMEDIFF, DATE_TRUNC, DATE_PART, EXTRACT, LAST_DAY, ADD_MONTHS, DATE_FROM_PARTS, TIME_FROM_PARTS, TIMESTAMP_FROM_PARTS, CONVERT_TIMEZONE, TO_DATE, TO_TIMESTAMP |
+| **Numeric** | ABS, CEIL, FLOOR, ROUND, MOD, SQRT, POWER, EXP, LN, LOG, SIGN, DIV0, DIV0NULL, WIDTH_BUCKET, TRUNCATE, CBRT, FACTORIAL, DEGREES, RADIANS, PI, RANDOM, GREATEST, LEAST |
+| **Aggregate** | COUNT, SUM, AVG, MIN, MAX, MEDIAN, LISTAGG, ANY_VALUE, KURTOSIS, SKEW, COVAR_POP, COVAR_SAMP |
+| **Window** | ROW_NUMBER, RANK, DENSE_RANK, LEAD, LAG, FIRST_VALUE, LAST_VALUE |
+| **JSON** | PARSE_JSON, OBJECT_CONSTRUCT, OBJECT_INSERT, GET_PATH, TRY_PARSE_JSON, OBJECT_KEYS, CHECK_JSON, TO_JSON |
+| **Array** | ARRAY_CONSTRUCT, ARRAY_SIZE, ARRAY_CONTAINS, FLATTEN, ARRAY_SLICE, ARRAY_CAT, ARRAY_APPEND, ARRAY_PREPEND, ARRAY_SORT, ARRAY_REVERSE, ARRAY_MIN, ARRAY_MAX, ARRAY_SUM, ARRAYS_OVERLAP, ARRAY_DISTINCT, ARRAY_INTERSECTION, ARRAY_EXCEPT |
+| **Conditional** | NVL, NVL2, DECODE, IFF, COALESCE, NULLIF, EQUAL_NULL, ZEROIFNULL, NULLIFZERO |
+| **Conversion** | TO_CHAR, TO_NUMBER, TO_BOOLEAN, TO_DATE, TRY_CAST, TRY_TO_NUMBER, TRY_TO_DATE, TRY_TO_TIMESTAMP, TRY_TO_BOOLEAN |
+| **Regex** | REGEXP_LIKE, REGEXP_SUBSTR, REGEXP_REPLACE, REGEXP_COUNT |
+| **Hash** | MD5, SHA1, SHA2, SHA256, HASH |
+| **Encoding** | BASE64_ENCODE, BASE64_DECODE_STRING, HEX_ENCODE, HEX_DECODE_STRING |
+| **Bitwise** | BITAND, BITOR, BITXOR, BITNOT, BITAND_AGG, BITOR_AGG, BITXOR_AGG |
+| **Boolean Agg** | BOOLAND_AGG, BOOLOR_AGG |
+| **Utility** | UUID_STRING, TYPEOF |
+
+### Cursor Methods
+
+SnowDuck supports all standard Snowflake cursor methods:
+
+- `execute()` - Execute SQL statements
+- `fetchone()` - Fetch a single row
+- `fetchmany(size)` - Fetch multiple rows
+- `fetchall()` - Fetch all rows
+- `fetch_pandas_all()` - Fetch all rows as pandas DataFrame
+- `fetch_pandas_batches()` - Fetch rows as iterator of DataFrames
+- `get_result_batches()` - Get Arrow record batches
+- `describe()` - Get result schema without execution
+
+> **Note**: SnowDuck is designed for development and testing. Use production Snowflake for production workloads.
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-# Using uv (recommended - 10-100x faster)
+# Using uv (recommended)
 uv pip install snowduck
 
 # Or using pip
 pip install snowduck
 ```
 
-### Usage
+### Basic Usage
 
 ```python
 import snowflake.connector
@@ -62,20 +89,13 @@ start_patch_snowflake()
 with snowflake.connector.connect() as conn:
     cursor = conn.cursor()
     
-    # Create a database
     cursor.execute("CREATE DATABASE my_database")
     cursor.execute("USE DATABASE my_database")
     
-    # Create a table
     cursor.execute("""
-        CREATE TABLE employees (
-            id INTEGER,
-            name VARCHAR,
-            salary INTEGER
-        )
+        CREATE TABLE employees (id INTEGER, name VARCHAR, salary INTEGER)
     """)
     
-    # Insert data
     cursor.execute("""
         INSERT INTO employees VALUES
         (1, 'Alice', 95000),
@@ -83,220 +103,102 @@ with snowflake.connector.connect() as conn:
         (3, 'Carol', 105000)
     """)
     
-    # Query with Snowflake SQL
     cursor.execute("""
-        SELECT 
-            name,
-            salary,
-            RANK() OVER (ORDER BY salary DESC) as rank
+        SELECT name, salary, RANK() OVER (ORDER BY salary DESC) as rank
         FROM employees
     """)
     
     for row in cursor.fetchall():
-        print(f"{row[0]}: ${row[1]:,} (Rank: {row[2]})")
+        print(f"{row[0]}: \${row[1]:,} (Rank: {row[2]})")
 ```
 
-**Output:**
-```
-Carol: $105,000 (Rank: 1)
-Alice: $95,000 (Rank: 2)
-Bob: $75,000 (Rank: 3)
-```
+### Data Persistence
 
-### Data Persistence Options
-
-SnowDuck supports two storage modes:
-
-**In-Memory (Default)**: Fast, isolated, data lost on exit
 ```python
-start_patch_snowflake()  # or start_patch_snowflake(db_file=':memory:')
+# In-memory (default) - fast, isolated
+start_patch_snowflake()
+
+# File-based - persistent across restarts
+start_patch_snowflake(db_file='my_data.duckdb')
+
+# Fresh start - reset existing data
+start_patch_snowflake(db_file='my_data.duckdb', reset=True)
 ```
 
-**File-Based**: Persistent, data survives restarts, perfect for testing
-```python
-# Data persists to file and survives program restarts
-start_patch_snowflake(db_file='test_data.duckdb')
-
-with snowflake.connector.connect() as conn:
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE employees (...)")
-    # Data saved to test_data.duckdb
-
-# Later - data still exists!
-with snowflake.connector.connect() as conn:
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM employees")  # ✅ Works!
-```
-**3. Fresh Start**: Reset clears existing data (great for notebooks!)
-```python
-# Deletes existing database file for a clean slate
-start_patch_snowflake(db_file='demo.duckdb', reset=True)
-```
-Use file-based storage for:
-- 🧪 **Test fixtures** that persist across test runs
-- 📊 **Shared test data** across multiple test files
-- 🔄 **CI/CD pipelines** with reproducible datasets
-- 🚀 **Development** with sample data you want to keep
-
-### Data Seeding Made Easy
-
-SnowDuck includes `seed_table()` for effortless test data creation:
+### Test Data Seeding
 
 ```python
 from snowduck import seed_table
-import pandas as pd
 
 with snowflake.connector.connect() as conn:
-    # From dict of lists (easiest!)
+    # From dict
     seed_table(conn, 'customers', {
         'id': [1, 2, 3],
-        'name': ['Acme Corp', 'TechStart', 'DataCo'],
-        'revenue': [1000000, 50000, 800000]
+        'name': ['Acme', 'TechStart', 'DataCo']
     })
     
     # From pandas DataFrame
-    df = pd.read_csv('test_data.csv')
     seed_table(conn, 'orders', df)
-    
-    # From list of dicts
-    seed_table(conn, 'products', [
-        {'id': 1, 'name': 'Widget', 'price': 9.99},
-        {'id': 2, 'name': 'Gadget', 'price': 19.99}
-    ])
 ```
 
-**Why `seed_table()` is awesome:**
-- ✅ One line to create and populate tables
-- ✅ Automatic data type inference
-- ✅ Handles NULL values, timestamps, special characters
-- ✅ Drops existing table by default (perfect for test fixtures)
-- ✅ Works with dicts, DataFrames, or list of dicts
+## Testing
 
-### More Examples
-
-Check out [examples/notebook.ipynb](examples/notebook.ipynb) for comprehensive examples including:
-- Database and schema management
-- Table operations and data manipulation
-- String and aggregate functions
-- Window functions and analytics
-- Session variables
-- Information schema queries
-- Complex CTEs and subqueries
-
-## Use Cases
-
-### 1. Local Development
-```python
-# Develop and test Snowflake SQL without cloud access
-from snowduck import start_patch_snowflake
-start_patch_snowflake()
-
-# Your existing Snowflake code works unchanged!
-import snowflake.connector
-conn = snowflake.connector.connect()
-```
-
-### 2. Unit Testing
-
-**Recommended: Use the `@mock_snowflake` decorator for clean, isolated tests**
+### Using the Decorator
 
 ```python
-import pytest
-import snowflake.connector
-from snowduck import mock_snowflake, seed_table
+from snowduck import mock_snowflake
 
-# Simple unit test - automatic setup and cleanup
 @mock_snowflake
-def test_query_execution():
-    """Each test gets a fresh, isolated in-memory database."""
+def test_query():
     conn = snowflake.connector.connect()
-    cursor = conn.cursor()
-    
-    cursor.execute("CREATE TABLE users (id INT, name VARCHAR)")
-    cursor.execute("INSERT INTO users VALUES (1, 'Alice')")
-    cursor.execute("SELECT * FROM users")
-    
-    assert cursor.fetchone() == (1, 'Alice')
-    # ✅ Automatic cleanup - no side effects!
-
-# Test with seed data
-@mock_snowflake
-def test_with_seed_data():
-    """Use seed_table() for easy test data creation."""
-    conn = snowflake.connector.connect()
-    
-    # One line to create and populate table!
-    seed_table(conn, 'customers', {
-        'id': [1, 2, 3],
-        'name': ['Acme Corp', 'TechStart', 'DataCo'],
-        'tier': ['enterprise', 'startup', 'enterprise']
-    })
-    
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM customers WHERE tier = 'enterprise'")
-    assert cursor.fetchone()[0] == 2
-```
-
-**For shared fixtures across tests, use `conftest.py`:**
-```python
-# conftest.py
-import pytest
-from snowduck import patch_snowflake
-import snowflake.connector
-
-@pytest.fixture
-def conn():
-    """Per-test isolation with automatic cleanup."""
-    with patch_snowflake():
-        conn = snowflake.connector.connect()
-        yield conn
-        # ✅ Automatic cleanup on exit
-
-def test_my_feature(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT 1")
     assert cursor.fetchone()[0] == 1
 ```
 
-**Testing Patterns:**
-- ✅ **Simple tests**: Use `@mock_snowflake` decorator
-- ✅ **Shared setup**: Use fixture with `patch_snowflake()` context manager  
-- ✅ **Isolated tests**: In-memory (default) - fresh DB per test
-- ✅ **Persistent data**: File-based - `start_patch_snowflake(db_file='test.duckdb')`
+### Using the Context Manager
 
-### 3. CI/CD Integration
-```yaml
-# .github/workflows/test.yml
-- name: Test SQL transformations
-  run: |
-    pip install snowduck pytest
-    pytest tests/  # Uses SnowDuck instead of real Snowflake
+```python
+from snowduck import patch_snowflake
+
+def test_with_fixture():
+    with patch_snowflake():
+        conn = snowflake.connector.connect()
+        # Test code here
 ```
 
-### 4. REST API Server
+### pytest Fixture
+
+```python
+import pytest
+from snowduck import patch_snowflake
+
+@pytest.fixture
+def conn():
+    with patch_snowflake():
+        yield snowflake.connector.connect()
+
+def test_feature(conn):
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1")
+```
+
+## REST API Server
+
 ```bash
 # Install with server extras
 uv pip install snowduck[server]
 
 # Start the server
-just serve
-# Or: uvicorn snowduck.server:app --reload
-
-# Server runs at http://localhost:8000
-# - Execute SQL queries via REST API
-# - Get results in Arrow IPC format
-# - Multi-session support with session management
-# - Compatible with Snowflake REST API clients
+uvicorn snowduck.server:app --reload
 ```
 
+The server provides:
+- Execute SQL queries via REST API
+- Arrow IPC format responses
+- Multi-session support
+
 ## Architecture
-
-SnowDuck works by:
-
-1. **Patching** - Intercepts Snowflake connector calls via `start_patch_snowflake()`
-2. **Translating** - Converts Snowflake SQL dialect to DuckDB-compatible SQL
-3. **Executing** - Runs queries in DuckDB's fast in-memory engine
-4. **Emulating** - Mimics Snowflake's information schema and metadata
 
 ```
 ┌─────────────────────┐
@@ -320,116 +222,29 @@ SnowDuck works by:
 └─────────────────────┘
 ```
 
+## Examples
+
+See the [examples/](examples/) directory for Jupyter notebooks demonstrating:
+- Basic operations and queries
+- String, date, and numeric functions
+- JSON and array operations
+- Window functions
+- Advanced SQL patterns
+
 ## Development
 
-**Prerequisites**: Python 3.11+, [uv](https://github.com/astral-sh/uv), [just](https://github.com/casey/just)
-
 ```bash
-# Clone and setup
 git clone https://github.com/hupe1980/snowduck.git
 cd snowduck
 uv sync
-
-# Run tests (128 tests, <2s)
 just test
-
-# Run all quality checks
 just check
-
-# See all commands
-just --list
 ```
-
-### Testing Best Practices
-
-**When writing tests with SnowDuck:**
-
-1. **Use `@mock_snowflake` for unit tests** - Clean, automatic cleanup
-   ```python
-   from snowduck import mock_snowflake
-   
-   @mock_snowflake
-   def test_my_feature():
-       conn = snowflake.connector.connect()
-       # Test code here - fresh DB, auto cleanup!
-   ```
-
-2. **Use `seed_table()` for test data** - One-line table creation
-   ```python
-   seed_table(conn, 'test_table', {'id': [1, 2], 'name': ['a', 'b']})
-   ```
-
-3. **Choose the right storage mode:**
-   - In-memory (default): Fast, isolated tests
-   - File-based: Shared fixtures, persistent data
-   ```python
-   # Isolated: Each test gets fresh DB
-   @mock_snowflake  # Uses in-memory by default
-   def test_isolated(): ...
-   
-   # Shared: Data persists across tests
-   @pytest.fixture(scope="session")
-   def shared_data():
-       start_patch_snowflake(db_file='fixtures.duckdb')
-   ```
-
-4. **Avoid anti-patterns:**
-   - ❌ Don't mix `start_patch_snowflake()` with `@mock_snowflake`
-   - ❌ Don't forget cleanup with manual `start_patch_snowflake()`
-   - ✅ Use decorators or context managers for automatic cleanup
-
-## Project Status
-
-- ✅ **128 tests** (100% passing, <2s execution)
-- ✅ **Zero linting errors** - Professional, clean codebase
-- ✅ **90%+ Snowflake compatibility** - DDL, DML, functions, CTEs, window functions
-- ✅ **Modern CI/CD** - PyPI trusted publishers with package attestations
-- ✅ **Production-ready** for development & testing use cases
-- 🚧 **Experimental** - Not for production Snowflake replacement
-
-**What's Next:**
-- Type safety improvements (mypy strict mode)
-- Performance monitoring and benchmarks  
-- Enhanced error messages with helpful suggestions
-- API documentation with Sphinx
-## Roadmap
-
-- [ ] Additional Snowflake functions (JSON, ARRAY, etc.)
-- [ ] Stored procedure emulation
-- [ ] External table support
-- [ ] Enhanced security features
-- [ ] Performance benchmarks vs. Snowflake
 
 ## Contributing
 
-Contributions welcome! We'd love help with:
-
-- 🐛 Bug reports and fixes
-- ✨ New Snowflake function implementations
-- 📚 Documentation improvements
-- 🧪 Additional test coverage
-
-**Development Setup:**
-- 📚 Documentation improvements
-- 🧪 Additional test coverage
-
-**Development Setup:**
-```bash
-git clone https://github.com/hupe1980/snowduck.git
-cd snowduck
-uv sync
-just test  # Run 128 tests in <2s
-```
-
-**Code Quality:**
-- Zero linting errors (ruff)
-- Comprehensive test coverage
-- Modern CI/CD with package attestations
+Contributions welcome! See issues for areas where help is needed.
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-**Built with ❄️ and 🦆

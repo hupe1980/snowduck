@@ -20,12 +20,14 @@ class Connection:
         schema: str | None = None,
         role: str | None = None,
         warehouse: str | None = None,
+        owns_duck_conn: bool = False,
         *args: Any,
         **kwargs: Any,
     ) -> None:
         self._duck_conn = duck_conn
         self._info_schema_manager = info_schema_manager
         self._is_closed = False
+        self._owns_duck_conn = owns_duck_conn  # If True, we close the DuckDB conn on close()
         self._database: str | None = None
         self._schema: str | None = None
         self._role: str | None = None
@@ -67,8 +69,8 @@ class Connection:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        # No cleanup required for DuckDB in-memory connection
-        pass
+        """Close the connection when exiting context manager."""
+        self.close()
 
     def autocommit(self, _mode: bool) -> None:
         pass
@@ -133,8 +135,11 @@ class Connection:
     def close(self) -> None:
         """
         Closes the connection.
+        Note: Only closes the underlying DuckDB connection if this Connection owns it.
+        Shared connections (from Connector) are not closed here.
         """
-        self._duck_conn.close()
+        if self._owns_duck_conn and self._duck_conn:
+            self._duck_conn.close()
         self._is_closed = True
 
     def is_closed(self) -> bool:

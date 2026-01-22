@@ -12,3 +12,4 @@ SELECT
 FROM system.information_schema.schemata
 WHERE catalog_name = '{database}'
   AND schema_name != '{info_schema_name}'
+  AND schema_name != 'main'

@@ -121,7 +121,8 @@ class Cursor:
         )
 
     def describe_last_sql(self) -> list:
-        assert self._duck_cur.description, "No description available"
+        if not self._duck_cur.description:
+            raise TypeError("No result set available to describe")
         nullability = self._infer_nullability()
         if nullability:
             patched = []
@@ -189,6 +190,40 @@ class Cursor:
 
         return mapping
 
+    def _preprocess_json_extract_path_text(self, sql: str) -> str:
+        """
+        Pre-process JSON_EXTRACT_PATH_TEXT to convert multiple keys into a single JSONPath.
+        
+        Snowflake parser has a bug where it only includes the first key, so we need to
+        transform the SQL string before parsing.
+        
+        Example:
+            JSON_EXTRACT_PATH_TEXT(json, 'a', 'b', 'c')
+            -> GET_PATH(json, 'a.b.c')
+        """
+        import re
+        
+        # Match JSON_EXTRACT_PATH_TEXT(arg1, 'key1', 'key2', ...)
+        pattern = r"JSON_EXTRACT_PATH_TEXT\s*\(\s*([^,]+)\s*,\s*(.+?)\s*\)"
+        
+        def replace_func(match):
+            json_arg = match.group(1)
+            keys_str = match.group(2)
+            
+            # Extract individual keys (quoted strings)
+            keys = re.findall(r"'([^']+)'", keys_str)
+            
+            if not keys:
+                return match.group(0)  # No change if no keys found
+            
+            # Build the path
+            path = '.'.join(keys)
+            
+            # Use GET_PATH which will be properly handled by preprocessor
+            return f"GET_PATH({json_arg}, '{path}')"
+        
+        return re.sub(pattern, replace_func, sql, flags=re.IGNORECASE | re.DOTALL)
+
     def execute(
         self,
         command: str,
@@ -200,6 +235,10 @@ class Cursor:
             self._sqlstate = None
 
             command, params = self._rewrite_with_params(command, params)
+
+            # Pre-process JSON_EXTRACT_PATH_TEXT to build full JSONPath
+            # Snowflake parser incorrectly only includes first key
+            command = self._preprocess_json_extract_path_text(command)
 
             expressions = sqlglot.parse(command, read="snowflake")
 
@@ -260,6 +299,16 @@ class Cursor:
         self._rowcount = None
         self._sfqid = None
         self._last_table_name = None
+
+        # Ensure DuckDB cursor uses the correct database/schema context
+        # DuckDB cursors don't inherit connection-level SET schema settings
+        if self._sf_conn.database and self._sf_conn.schema:
+            try:
+                self._duck_cur.execute(
+                    f"SET schema='{self._sf_conn.database}.{self._sf_conn.schema}'"
+                )
+            except Exception:
+                pass  # Schema may not exist yet
 
         cmd = extract_sql_command(transformed)
 
@@ -458,6 +507,11 @@ class Cursor:
         if params and self._sf_conn.paramstyle in ("pyformat", "format"):
 
             def convert(param: Any) -> Any:
+                # Snowflake returns float for Python float parameters (REAL/FLOAT type)
+                # DuckDB treats numeric literals as DECIMAL by default
+                # Wrap floats with CAST(...  AS DOUBLE) to match Snowflake behavior
+                if isinstance(param, float):
+                    return f"CAST({param} AS DOUBLE)"
                 return self._converter.quote(
                     self._converter.escape(self._converter.to_snowflake(param))
                 )
@@ -503,6 +557,68 @@ class Cursor:
         return self.fetchmany(
             self._arrow_table.num_rows - self._arrow_table_fetch_index
         )
+
+    def fetch_pandas_all(self, **kwargs: Any) -> "pd.DataFrame":
+        """
+        Fetch all rows as a pandas DataFrame.
+        
+        This matches Snowflake's cursor.fetch_pandas_all() method.
+        
+        Returns:
+            pandas.DataFrame: All remaining rows as a DataFrame.
+        """
+        import pandas as pd
+        
+        if self._arrow_table is None:
+            raise TypeError("No open result set")
+        
+        # Return remaining rows from current index
+        remaining = self._arrow_table.slice(
+            offset=self._arrow_table_fetch_index,
+            length=self._arrow_table.num_rows - self._arrow_table_fetch_index
+        )
+        self._arrow_table_fetch_index = self._arrow_table.num_rows
+        return remaining.to_pandas()
+
+    def fetch_pandas_batches(self, **kwargs: Any) -> "Iterator[pd.DataFrame]":
+        """
+        Fetch results as an iterator of pandas DataFrames.
+        
+        This matches Snowflake's cursor.fetch_pandas_batches() method.
+        Yields batches of rows as DataFrames.
+        
+        Yields:
+            pandas.DataFrame: Batches of rows as DataFrames.
+        """
+        import pandas as pd
+        from typing import Iterator
+        
+        if self._arrow_table is None:
+            raise TypeError("No open result set")
+        
+        batch_size = kwargs.get("batch_size", 10000)
+        
+        while self._arrow_table_fetch_index < self._arrow_table.num_rows:
+            remaining = self._arrow_table.num_rows - self._arrow_table_fetch_index
+            size = min(batch_size, remaining)
+            
+            batch = self._arrow_table.slice(
+                offset=self._arrow_table_fetch_index,
+                length=size
+            )
+            self._arrow_table_fetch_index += size
+            yield batch.to_pandas()
+
+    def get_result_batches(self) -> list["pa.RecordBatch"]:
+        """
+        Get all Arrow result batches from the current result set.
+        
+        Returns:
+            list[pyarrow.RecordBatch]: List of Arrow record batches.
+        """
+        if self._arrow_table is None:
+            raise TypeError("No open result set")
+        return self._arrow_table.to_batches()
 
     def is_closed(self) -> bool:
         return self._is_closed

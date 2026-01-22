@@ -41,6 +41,19 @@ def test_create_schema(conn: snowflake.connector.SnowflakeConnection):
         assert cur.fetchone()[0] == "Schema FOO successfully created."
 
 
+def test_create_schema_in_database(conn: snowflake.connector.SnowflakeConnection):
+    """Test that CREATE SCHEMA creates the schema in the correct database."""
+    with conn.cursor() as cur:
+        cur.execute("CREATE DATABASE test_db")
+        cur.execute("USE DATABASE test_db")
+        cur.execute("CREATE SCHEMA staging")
+        cur.execute("SHOW SCHEMAS")
+        schemas = cur.fetchall()
+        schema_names = [s[1] for s in schemas]
+        assert "STAGING" in schema_names, f"Expected STAGING in {schema_names}"
+        assert "PUBLIC" in schema_names, f"Expected PUBLIC in {schema_names}"
+
+
 def test_create_table(conn: snowflake.connector.SnowflakeConnection):
     with conn.cursor() as cur:
         cur.execute("create table foo (ID int)")
