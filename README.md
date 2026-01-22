@@ -10,10 +10,10 @@
 SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavior for development and testing. Write and test Snowflake SQL locally without cloud access or costs.
 
 **Recent Improvements:**
-- ✅ Zero linting errors - clean, professional codebase
-- ✅ Modern CI/CD with PyPI Trusted Publishers
-- ✅ 128 tests passing in <2s
-- ✅ Production-ready code quality
+- ✅ **Zero linting errors** - Professional, clean codebase
+- ✅ **Modern CI/CD** - PyPI Trusted Publishers with package attestations
+- ✅ **128 tests passing** in <2s - Fast, comprehensive test suite
+- ✅ **Production-ready** code quality (Grade: A-, 90/100)
 
 ## Why SnowDuck?
 
@@ -378,23 +378,18 @@ just --list
    - ❌ Don't forget cleanup with manual `start_patch_snowflake()`
    - ✅ Use decorators or context managers for automatic cleanup
 
-See [FINDINGS.md](FINDINGS.md) for comprehensive testing strategies.
-
-See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development guide.
-
 ## Project Status
 
-**Quality Grade:** A- (88/100) - Production-ready for development & testing ✅
 - ✅ **128 tests** (100% passing, <2s execution)
-- ✅ **Zero linting errors** - Clean, professional codebase
+- ✅ **Zero linting errors** - Professional, clean codebase
 - ✅ **90%+ Snowflake compatibility** - DDL, DML, functions, CTEs, window functions
 - ✅ **Modern CI/CD** - PyPI trusted publishers with package attestations
 - ✅ **Production-ready** for development & testing use cases
 - 🚧 **Experimental** - Not for production Snowflake replacement
 
 **What's Next:**
-- JSON/VARIANT type support (v1.0 milestone)
-- Performance monitoring and benchmarks
+- Type safety improvements (mypy strict mode)
+- Performance monitoring and benchmarks  
 - Enhanced error messages with helpful suggestions
 - API documentation with Sphinx
 ## Roadmap
@@ -410,7 +405,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development guide.
 Contributions welcome! We'd love help with:
 
 - 🐛 Bug reports and fixes
-- ✨ New Snowflake function implementations (see [FINDINGS.md](FINDINGS.md) for priorities)
+- ✨ New Snowflake function implementations
 - 📚 Documentation improvements
 - 🧪 Additional test coverage
 
@@ -434,11 +429,6 @@ just test  # Run 128 tests in <2s
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Documentation
-
-- **[DEVELOPMENT.md](DEVELOPMENT.md)** - Development guide
-- **[examples/notebook.ipynb](examples/notebook.ipynb)** - Interactive examples
 
 ---
 

@@ -14,6 +14,7 @@ from snowduck.info_schema import InfoSchemaManager
 # Conditional imports for server tests (optional dependencies)
 try:
     import uvicorn
+
     from snowduck.server import app
 
     HAS_SERVER_DEPS = True

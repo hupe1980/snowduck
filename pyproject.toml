@@ -1,6 +1,6 @@
 [project]
 name = "snowduck"
-version = "0.0.2"
+version = "0.0.3"
 description = "Run Snowflake SQL locally, powered by DuckDB - lightweight in-memory SQL engine for development and testing"
 authors = [
     {name = "hupe1980"}
