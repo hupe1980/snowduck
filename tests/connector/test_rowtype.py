@@ -69,4 +69,3 @@ def test_rowtype_overrides_from_info_schema():
 
     assert rowtype[0]["nullable"] is False
     assert rowtype[0]["precision"] == 38  # Integer precision normalized to 38
-

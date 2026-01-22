@@ -12,7 +12,7 @@ def test_query_format_inferred_from_accept_header():
         token = login_resp.json()["data"]["token"]
 
         headers = {
-            "Authorization": f"Snowflake Token=\"{token}\"",
+            "Authorization": f'Snowflake Token="{token}"',
             "Accept": "application/json",
         }
 

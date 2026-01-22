@@ -1,4 +1,3 @@
-
 from starlette.testclient import TestClient
 
 from snowduck.server import app
@@ -15,7 +14,7 @@ def test_query_chunking(monkeypatch):
         assert login_resp.status_code == 200
         token = login_resp.json()["data"]["token"]
 
-        headers = {"Authorization": f"Snowflake Token=\"{token}\""}
+        headers = {"Authorization": f'Snowflake Token="{token}"'}
         query_resp = client.post(
             "/queries/v1/query-request",
             headers=headers,

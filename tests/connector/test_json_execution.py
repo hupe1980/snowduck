@@ -14,6 +14,7 @@ def test_parse_json_execution(conn: snowflake.connector.SnowflakeConnection):
         # DuckDB might strip spaces
         assert '"key": 1' in val or '"key":1' in val
 
+
 def test_try_parse_json_execution(conn: snowflake.connector.SnowflakeConnection):
     with conn.cursor() as cur:
         cur.execute("SELECT TRY_PARSE_JSON('{\"key\": 1}')")
@@ -26,13 +27,17 @@ def test_try_parse_json_execution(conn: snowflake.connector.SnowflakeConnection)
         result = cur.fetchone()
         assert result[0] is None
 
+
 def test_json_type_consistency(conn: snowflake.connector.SnowflakeConnection):
     # Verify we can mix PARSE_JSON and TRY_PARSE_JSON
     with conn.cursor() as cur:
         # Union should work if types are compatible
-        cur.execute("SELECT PARSE_JSON('{\"a\":1}') UNION ALL SELECT TRY_PARSE_JSON('{\"b\":2}')")
+        cur.execute(
+            "SELECT PARSE_JSON('{\"a\":1}') UNION ALL SELECT TRY_PARSE_JSON('{\"b\":2}')"
+        )
         rows = cur.fetchall()
         assert len(rows) == 2
+
 
 def test_json_access(conn: snowflake.connector.SnowflakeConnection):
     with conn.cursor() as cur:

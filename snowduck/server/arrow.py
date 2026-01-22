@@ -95,6 +95,7 @@ def to_sf(table: pa.Table, rowtype: list[ColumnInfo]) -> pa.Table:
     Returns:
         pa.Table: A transformed Snowflake-compatible table.
     """
+
     def to_sf_col(col: pa.ChunkedArray) -> pa.Array | pa.ChunkedArray:
         """
         Transform a PyArrow column to Snowflake-compatible format.
@@ -112,8 +113,8 @@ def to_sf(table: pa.Table, rowtype: list[ColumnInfo]) -> pa.Table:
         return col
 
     return pa.Table.from_arrays(
-        [to_sf_col(col) for col in table.columns], 
-        schema=to_sf_schema(table.schema, rowtype)
+        [to_sf_col(col) for col in table.columns],
+        schema=to_sf_schema(table.schema, rowtype),
     )
 
 

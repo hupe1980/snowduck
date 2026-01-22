@@ -63,12 +63,14 @@ class Dialect(DuckDB):
     @classmethod
     def sql_with_cache(cls, expression: exp.Expression, dialect: "Dialect") -> str:
         snowflake_sql = expression.sql(dialect="snowflake")
-        
+
         # Don't cache queries with variable substitutions (they can change frequently)
-        has_variables = bool(expression.find(exp.Parameter) or expression.find(exp.Placeholder))
+        has_variables = bool(
+            expression.find(exp.Parameter) or expression.find(exp.Placeholder)
+        )
         if has_variables:
             return expression.sql(dialect=dialect)
-        
+
         key = cls._cache_key(snowflake_sql, dialect.context)
         cached = cls._SQL_CACHE.get(key)
         if cached is not None:
@@ -89,7 +91,9 @@ class Dialect(DuckDB):
             exp.Create: lambda self, e: transform_create(e, context=self._context),
             exp.Describe: lambda self, e: transform_describe(e, context=self._context),
             exp.Use: lambda self, e: transform_use(e, context=self._context),
-            exp.Select: lambda self, e: transform_current_session_info(e, context=self._context),
+            exp.Select: lambda self, e: transform_current_session_info(
+                e, context=self._context
+            ),
             exp.Lateral: lambda self, e: transform_lateral(e, context=self._context),
             exp.Copy: lambda self, e: transform_copy(e, context=self._context),
             exp.Set: lambda self, e: transform_set(e, context=self._context),
@@ -100,16 +104,28 @@ class Dialect(DuckDB):
             self._context = dialect.context
 
         def preprocess(self, expression: exp.Expression) -> exp.Expression:
-            expression = expression.transform(preprocess_variables, context=self._context)
-            expression = expression.transform(preprocess_identifier, context=self._context)
-            expression = expression.transform(preprocess_info_schema, context=self._context)
-            expression = expression.transform(preprocess_current_schema, context=self._context)
-            expression = expression.transform(preprocess_system_calls, context=self._context)
-            expression = expression.transform(preprocess_semi_structured, context=self._context)
-            expression = expression.transform(preprocess_generator, context=self._context)
-            expression = expression.transform(preprocess_seq_functions, context=self._context)
+            expression = expression.transform(
+                preprocess_variables, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_identifier, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_info_schema, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_current_schema, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_system_calls, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_semi_structured, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_generator, context=self._context
+            )
+            expression = expression.transform(
+                preprocess_seq_functions, context=self._context
+            )
             return super().preprocess(expression)
-
-
-       
-        

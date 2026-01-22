@@ -4,7 +4,7 @@ from snowduck.info_schema import InfoSchemaManager
 
 
 def test_info_schema_cache_reuse():
-    conn = duckdb.connect(':memory:')
+    conn = duckdb.connect(":memory:")
     mgr = InfoSchemaManager(conn)
 
     conn.execute("CREATE TABLE test_cache (a INTEGER)")

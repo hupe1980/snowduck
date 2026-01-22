@@ -5,6 +5,7 @@ from snowduck.server import SessionManager
 
 class MockConnection:
     """Mock class for Connection to use in tests."""
+
     pass
 
 

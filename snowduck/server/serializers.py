@@ -5,7 +5,7 @@ from typing import Any, List
 
 def serialize_item(item: Any) -> Any:
     """
-    Serializes a single cell value to a JSON-compatible format 
+    Serializes a single cell value to a JSON-compatible format
     matching Snowflake's expected string representations.
     """
     if item is None:

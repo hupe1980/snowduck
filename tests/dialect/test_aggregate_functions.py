@@ -22,11 +22,12 @@ def test_listagg(dialect_context):
     FROM (VALUES ('a'), ('b'), ('c')) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     assert res[0] == "a,b,c"
@@ -39,11 +40,12 @@ def test_median(dialect_context):
     FROM (VALUES (1), (2), (3), (4), (5)) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     assert res[0] == 3
@@ -56,11 +58,12 @@ def test_approx_count_distinct(dialect_context):
     FROM (VALUES (1), (2), (2), (3), (3), (3)) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     # Should be approximately 3
@@ -74,11 +77,12 @@ def test_mode(dialect_context):
     FROM (VALUES (1), (2), (2), (3)) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     assert res[0] == 2  # Most frequent value
@@ -91,11 +95,12 @@ def test_array_agg(dialect_context):
     FROM (VALUES (1), (2), (3)) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     # Result should be an array/list
@@ -110,11 +115,12 @@ def test_percentile_cont(dialect_context):
     FROM (VALUES (1), (2), (3), (4), (5)) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     # 50th percentile of [1,2,3,4,5] should be 3
@@ -128,11 +134,12 @@ def test_stddev_pop(dialect_context):
     FROM (VALUES (1), (2), (3), (4), (5)) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     # Population stddev of [1,2,3,4,5]
@@ -146,11 +153,12 @@ def test_variance(dialect_context):
     FROM (VALUES (1), (2), (3), (4), (5)) AS t(col1)
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     # Variance should be positive

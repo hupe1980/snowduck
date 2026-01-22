@@ -23,13 +23,19 @@ if TYPE_CHECKING:
     from .connection import Connection
 
 SQL_SUCCESS = "SELECT 'Statement executed successfully.' as 'status'"
-SQL_CREATED_DATABASE = Template("SELECT 'Database ${name} successfully created.' as 'status'")
-SQL_CREATED_SCHEMA = Template("SELECT 'Schema ${name} successfully created.' as 'status'")
+SQL_CREATED_DATABASE = Template(
+    "SELECT 'Database ${name} successfully created.' as 'status'"
+)
+SQL_CREATED_SCHEMA = Template(
+    "SELECT 'Schema ${name} successfully created.' as 'status'"
+)
 SQL_CREATED_TABLE = Template("SELECT 'Table ${name} successfully created.' as 'status'")
 SQL_CREATED_VIEW = Template("SELECT 'View ${name} successfully created.' as 'status'")
 SQL_DROPPED = Template("SELECT '${name} successfully dropped.' as 'status'")
 SQL_INSERTED_ROWS = Template("SELECT ${count} as 'number of rows inserted'")
-SQL_UPDATED_ROWS = Template("SELECT ${count} as 'number of rows updated', 0 as 'number of multi-joined rows updated'")
+SQL_UPDATED_ROWS = Template(
+    "SELECT ${count} as 'number of rows updated', 0 as 'number of multi-joined rows updated'"
+)
 SQL_DELETED_ROWS = Template("SELECT ${count} as 'number of rows deleted'")
 
 
@@ -38,10 +44,10 @@ def extract_sql_command(expression: exp.Expression) -> str:
 
     if isinstance(kind, str):
         return f"{expression.key.upper()} {kind.upper()}"
-    
+
     if isinstance(kind, exp.Var):
         return f"{expression.key.upper()} {kind.name.upper()}"
-    
+
     if isinstance(expression, exp.Command):
         key = expression.this
         key_str = key.name if isinstance(key, exp.Identifier) else str(key)
@@ -56,10 +62,11 @@ def extract_sql_command(expression: exp.Expression) -> str:
 
     return expression.key.upper()
 
+
 class Cursor:
     def __init__(
         self,
-        sf_conn: "Connection", 
+        sf_conn: "Connection",
         duck_conn: DuckDBPyConnection,
         info_schema_manager: InfoSchemaManager,
         use_dict_result: bool = False,
@@ -80,7 +87,7 @@ class Cursor:
         self._sfqid: str | None = None
         self._converter = snowflake.connector.converter.SnowflakeConverter()
         self.arraysize: int = 1
-    
+
     def __enter__(self) -> Self:
         return self
 
@@ -169,7 +176,9 @@ class Cursor:
 
         try:
             pragma_cur = self._duck_cur.connection.cursor()
-            rows = pragma_cur.execute(f"PRAGMA table_info('{pragma_target}')").fetchall()
+            rows = pragma_cur.execute(
+                f"PRAGMA table_info('{pragma_target}')"
+            ).fetchall()
             pragma_cur.close()
         except Exception:
             return {}
@@ -180,7 +189,13 @@ class Cursor:
 
         return mapping
 
-    def execute(self, command: str, params: Sequence[Any] | dict[Any, Any] | None = None, *args: Any, **kwargs: Any) -> Self:
+    def execute(
+        self,
+        command: str,
+        params: Sequence[Any] | dict[Any, Any] | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Self:
         try:
             self._sqlstate = None
 
@@ -208,9 +223,13 @@ class Cursor:
             raise e
         except sqlglot.errors.ParseError as e:
             self._sqlstate = "42000"
-            msg = str(e).replace("\x1b[4m", "").replace("\x1b[0m", "") # Remove ANSI formatting
-            raise snowflake.connector.errors.ProgrammingError(msg=msg, errno=1003, sqlstate=self._sqlstate) from None
-        
+            msg = (
+                str(e).replace("\x1b[4m", "").replace("\x1b[0m", "")
+            )  # Remove ANSI formatting
+            raise snowflake.connector.errors.ProgrammingError(
+                msg=msg, errno=1003, sqlstate=self._sqlstate
+            ) from None
+
     def _generate_result(self, template: Template | str, **kwargs) -> None:
         """
         Generates and executes a fake result set based on the provided template and parameters.
@@ -231,7 +250,11 @@ class Cursor:
         self._last_sql = result_sql
         self._last_params = None
 
-    def _execute(self, transformed: sqlglot.exp.Expression, params: Sequence[Any] | dict[Any, Any] | None = None):
+    def _execute(
+        self,
+        transformed: sqlglot.exp.Expression,
+        params: Sequence[Any] | dict[Any, Any] | None = None,
+    ):
         self._arrow_table = None
         self._arrow_table_fetch_index = 0
         self._rowcount = None
@@ -239,7 +262,7 @@ class Cursor:
         self._last_table_name = None
 
         cmd = extract_sql_command(transformed)
-        
+
         dialect = Dialect(
             context=DialectContext(
                 current_database=self._sf_conn.database,
@@ -250,14 +273,16 @@ class Cursor:
                 session_variables=self._sf_conn._session_variables,
             )
         )
-        
+
         replace_drop_sql: str | None = None
         if isinstance(transformed, exp.Create) and transformed.args.get("replace"):
             kind = transformed.args.get("kind")
             if isinstance(kind, str) and kind.upper() == "TABLE":
                 table_expr = transformed.this
                 if isinstance(table_expr, exp.Table):
-                    replace_drop_sql = f"DROP TABLE IF EXISTS {table_expr.sql(dialect=dialect)}"
+                    replace_drop_sql = (
+                        f"DROP TABLE IF EXISTS {table_expr.sql(dialect=dialect)}"
+                    )
                     create_expr = transformed.copy()
                     create_expr.set("replace", False)
                     sql = create_expr.sql(dialect=dialect)
@@ -271,7 +296,15 @@ class Cursor:
         if not sql:
             raise NotImplementedError(transformed.sql(dialect="snowflake"))
 
-        if cmd in {"ALTER SESSION", "PUT", "SET", "USE ROLE", "USE WAREHOUSE", "USE DATABASE", "USE SCHEMA"}:
+        if cmd in {
+            "ALTER SESSION",
+            "PUT",
+            "SET",
+            "USE ROLE",
+            "USE WAREHOUSE",
+            "USE DATABASE",
+            "USE SCHEMA",
+        }:
             if cmd == "SET":
                 # SET is handled by transform_set which stores in context
                 # sql is already a SELECT statement, execute it
@@ -283,7 +316,7 @@ class Cursor:
                     source = match.group(1)
                     stage = match.group(2)
                     if source.startswith("file://"):
-                        source = source[len("file://"):]
+                        source = source[len("file://") :]
                     stage_root = os.getenv("SNOWDUCK_STAGE_DIR", "/tmp/snowduck_stage")
                     dest_dir = os.path.join(stage_root, stage)
                     os.makedirs(dest_dir, exist_ok=True)
@@ -304,7 +337,11 @@ class Cursor:
                     elif isinstance(target, exp.Identifier):
                         ident = target.this
                         quoted = target.quoted
-                if ident is None and (eid := transformed.find(sqlglot.exp.Identifier, bfs=False)) and isinstance(eid.this, str):
+                if (
+                    ident is None
+                    and (eid := transformed.find(sqlglot.exp.Identifier, bfs=False))
+                    and isinstance(eid.this, str)
+                ):
                     ident = eid.this
                     quoted = eid.quoted
                 if ident is not None and not quoted:
@@ -345,20 +382,30 @@ class Cursor:
             self._last_params = params
         except duckdb.BinderException as e:
             msg = e.args[0]
-            raise snowflake.connector.errors.ProgrammingError(msg=msg, errno=2043, sqlstate="02000") from None
+            raise snowflake.connector.errors.ProgrammingError(
+                msg=msg, errno=2043, sqlstate="02000"
+            ) from None
         except duckdb.CatalogException as e:
             msg = cast(str, e.args[0]).split("\n")[0]
-            raise snowflake.connector.errors.ProgrammingError(msg=msg, errno=2003, sqlstate="42S02") from None
+            raise snowflake.connector.errors.ProgrammingError(
+                msg=msg, errno=2003, sqlstate="42S02"
+            ) from None
         except duckdb.TransactionException as e:
-            if "cannot rollback - no transaction is active" in str(e) or "cannot commit - no transaction is active" in str(e):
+            if "cannot rollback - no transaction is active" in str(
+                e
+            ) or "cannot commit - no transaction is active" in str(e):
                 # Snowflake allows rollback or commit even when no transaction is active
                 self._generate_result(SQL_SUCCESS)
             else:
                 raise e
         except duckdb.ConnectionException as e:
-            raise snowflake.connector.errors.DatabaseError(msg=e.args[0], errno=250002, sqlstate="08003") from None
+            raise snowflake.connector.errors.DatabaseError(
+                msg=e.args[0], errno=250002, sqlstate="08003"
+            ) from None
         except duckdb.ParserException as e:
-            raise snowflake.connector.errors.ProgrammingError(msg=e.args[0], errno=1003, sqlstate="42000") from None
+            raise snowflake.connector.errors.ProgrammingError(
+                msg=e.args[0], errno=1003, sqlstate="42000"
+            ) from None
 
         affected_count = None
 
@@ -374,10 +421,14 @@ class Cursor:
             self._generate_result(SQL_DELETED_ROWS, count=affected_count)
         elif cmd == "TRUNCATETABLE":
             self._generate_result(SQL_SUCCESS)
-        elif (eid := transformed.find(sqlglot.exp.Identifier, bfs=False)) and isinstance(eid.this, str):
+        elif (
+            eid := transformed.find(sqlglot.exp.Identifier, bfs=False)
+        ) and isinstance(eid.this, str):
             ident = eid.this if eid.quoted else eid.this.upper()
             if cmd == "CREATE DATABASE":
-                self._info_schema_manager.create_database_information_schema(database=ident)
+                self._info_schema_manager.create_database_information_schema(
+                    database=ident
+                )
                 self._generate_result(SQL_CREATED_DATABASE, name=ident)
             elif cmd == "CREATE SCHEMA":
                 self._generate_result(SQL_CREATED_SCHEMA, name=ident)
@@ -386,7 +437,7 @@ class Cursor:
             elif cmd == "CREATE TABLE":
                 self._generate_result(SQL_CREATED_TABLE, name=ident)
             elif cmd == "USE DATABASE":
-                self._sf_conn.use_database(ident) 
+                self._sf_conn.use_database(ident)
                 self._generate_result(SQL_SUCCESS)
             elif cmd == "USE SCHEMA":
                 self._sf_conn.use_schema(ident)
@@ -394,18 +445,22 @@ class Cursor:
 
         self._arrow_table = self._duck_cur.fetch_arrow_table()
         # Fallback to num_rows ONLY if affected_count is explicitly None (it will be None for SELECTs, but 0 for DML)
-        self._rowcount = affected_count if affected_count is not None else self._arrow_table.num_rows
+        self._rowcount = (
+            affected_count if affected_count is not None else self._arrow_table.num_rows
+        )
         self._sfqid = str(uuid.uuid4())
 
-    
     def _rewrite_with_params(
         self,
         command: str,
         params: Sequence[Any] | dict[Any, Any] | None = None,
     ) -> tuple[str, Sequence[Any] | dict[Any, Any] | None]:
-        if params and self._sf_conn.paramstyle in ("pyformat", "format"): 
+        if params and self._sf_conn.paramstyle in ("pyformat", "format"):
+
             def convert(param: Any) -> Any:
-                return self._converter.quote(self._converter.escape(self._converter.to_snowflake(param)))
+                return self._converter.quote(
+                    self._converter.escape(self._converter.to_snowflake(param))
+                )
 
             if isinstance(params, dict):
                 params = {k: convert(v) for k, v in params.items()}
@@ -415,12 +470,14 @@ class Cursor:
             return command % params, None
 
         return command, params
-        
+
     def fetchone(self) -> dict | tuple | None:
         result = self.fetchmany(1)
         return result[0] if result else None
-    
-    def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]] | list[dict[str, Any]]:
+
+    def fetchmany(
+        self, size: int | None = None
+    ) -> list[tuple[Any, ...]] | list[dict[str, Any]]:
         if self._arrow_table is None:
             # Raise an error if no result set is open
             # This is consistent with the behavior of the Snowflake cursor
@@ -432,7 +489,7 @@ class Cursor:
         start_index = self._arrow_table_fetch_index
         tslice = self._arrow_table.slice(offset=start_index, length=size).to_pylist()
         self._arrow_table_fetch_index += len(tslice)
-        
+
         # Return as a list of dictionaries or tuples based on _use_dict_result
         if self._use_dict_result:
             return tslice
@@ -443,11 +500,13 @@ class Cursor:
         if self._arrow_table is None:
             raise TypeError("No open result set")
         # Fetch everything remaining from the current index
-        return self.fetchmany(self._arrow_table.num_rows - self._arrow_table_fetch_index)
+        return self.fetchmany(
+            self._arrow_table.num_rows - self._arrow_table_fetch_index
+        )
 
     def is_closed(self) -> bool:
         return self._is_closed
-    
+
     def close(self) -> bool | None:
         try:
             if self.is_closed():
@@ -459,7 +518,7 @@ class Cursor:
             return True
         except Exception:
             return None
-        
+
     @property
     def rowcount(self) -> int | None:
         return self._rowcount
@@ -467,7 +526,7 @@ class Cursor:
     @property
     def sfqid(self) -> str | None:
         return self._sfqid
-    
+
     @property
     def sqlstate(self) -> str | None:
         return self._sqlstate
@@ -475,5 +534,3 @@ class Cursor:
     @property
     def last_table_name(self) -> str | None:
         return self._last_table_name
-
-

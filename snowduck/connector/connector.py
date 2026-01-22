@@ -5,10 +5,10 @@ from .connection import Connection
 
 
 class Connector:
-    def __init__(self, timezone: str = 'UTC', db_file: str = ':memory:'):
+    def __init__(self, timezone: str = "UTC", db_file: str = ":memory:"):
         """
         Initializes the SnowDuck connector factory.
-        
+
         Args:
             timezone: The default timezone to set for connections.
             db_file: The DuckDB database file to usage. Defaults to ':memory:' (transient).
@@ -21,7 +21,7 @@ class Connector:
         # Create a new connection (isolated in-memory or shared file-backed)
         duck_conn = duckdb.connect(database=self._db_file)
         duck_conn.execute(f"SET GLOBAL TimeZone = '{self._timezone}'")
-        
+
         info_schema_manager = InfoSchemaManager(duck_conn=duck_conn)
 
         return Connection(

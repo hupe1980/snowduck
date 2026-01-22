@@ -10,7 +10,9 @@ def load_sql(filepath: str, **params: Any) -> str:
     for key, value in params.items():
         if not isinstance(value, (str, int, float)):
             raise ValueError(f"Invalid parameter type for {key}: {type(value)}")
-        if isinstance(value, str) and any(char in value for char in [";", "--", "/*", "*/", "'"]):
+        if isinstance(value, str) and any(
+            char in value for char in [";", "--", "/*", "*/", "'"]
+        ):
             raise ValueError(f"Unsafe characters detected in parameter {key}: {value}")
 
     with open(filepath, "r", encoding="utf-8") as file:

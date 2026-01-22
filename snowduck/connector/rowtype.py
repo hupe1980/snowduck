@@ -14,9 +14,13 @@ def convert_dbapi_description_to_describe(description):
 
     converted = []
     for column in description:
-        column_name, type_name, *_rest, null_ok = column  # Extract the last value for nullability
+        column_name, type_name, *_rest, null_ok = (
+            column  # Extract the last value for nullability
+        )
         sql_type = type_mapping.get(type_name, type_name)  # Convert type
-        nullability = "YES" if null_ok is None or null_ok else "NO"  # Use YES for None or True
+        nullability = (
+            "YES" if null_ok is None or null_ok else "NO"
+        )  # Use YES for None or True
 
         converted.append((column_name, sql_type, nullability, None, None, None))
 
@@ -90,7 +94,9 @@ def describe_as_rowtype(
             return value
         return value.upper() == "YES"
 
-    def as_column_info(column_name: str, column_type: str, nullability: str | None) -> ColumnInfo:
+    def as_column_info(
+        column_name: str, column_type: str, nullability: str | None
+    ) -> ColumnInfo:
         column_type_str = str(column_type)
         if column_type_str.startswith("DECIMAL"):
             normalized_type = "DECIMAL"
@@ -144,7 +150,10 @@ def describe_as_rowtype(
             meta = overrides[column_name]
             if "is_nullable" in meta and meta["is_nullable"] is not None:
                 info["nullable"] = str(meta["is_nullable"]).upper() == "YES"
-            if "character_maximum_length" in meta and meta["character_maximum_length"] is not None:
+            if (
+                "character_maximum_length" in meta
+                and meta["character_maximum_length"] is not None
+            ):
                 info["length"] = int(meta["character_maximum_length"])
                 info["byteLength"] = int(meta["character_maximum_length"])
             if "numeric_precision" in meta and meta["numeric_precision"] is not None:

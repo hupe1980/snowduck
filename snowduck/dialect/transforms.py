@@ -9,7 +9,7 @@ from .context import DialectContext
 def transform_set(expression: exp.Expression, context: DialectContext) -> str:
     """
     Transform SET variable = value into context storage.
-    
+
     Snowflake: SET my_var = 'hello'
     Action: Store in context.session_variables, return success message
     """
@@ -20,27 +20,27 @@ def transform_set(expression: exp.Expression, context: DialectContext) -> str:
                 if isinstance(set_item.this, exp.EQ):
                     var_node = set_item.this.this
                     val_node = set_item.this.expression
-                    
+
                     if isinstance(var_node, exp.Column):
                         var_name = var_node.name.upper()
                     elif isinstance(var_node, exp.Identifier):
                         var_name = var_node.this.upper()
                     else:
                         continue
-                    
+
                     # Get the literal value
                     if isinstance(val_node, exp.Literal):
                         var_value = val_node.this
                     else:
                         # For non-literal values, convert to SQL string
                         var_value = val_node.sql(dialect="duckdb")
-                    
+
                     # Store in context
                     context.session_variables[var_name] = var_value
-        
+
         # Return a dummy SELECT to satisfy the execute
         return "SELECT 'Statement executed successfully.' AS status"
-    
+
     return ""
 
 
@@ -56,7 +56,7 @@ def transform_create(expression: exp.Create, context: DialectContext) -> str:
 
         return f"ATTACH {if_not_exists}DATABASE '{db_file}' AS {db_name}"
 
-    return expression.sql(dialect="duckdb")  
+    return expression.sql(dialect="duckdb")
 
 
 def transform_describe(expression: exp.Describe, context: DialectContext) -> str:
@@ -69,12 +69,19 @@ def transform_describe(expression: exp.Describe, context: DialectContext) -> str
             assert schema, f"Schema must be specified for table '{table.name}'"
             assert table.name, f"Table name must be specified for table '{table.name}'"
 
-            if schema and schema.upper() == context.info_schema_manager.info_schema_name:
-                return context.info_schema_manager.describe_info_schema_sql(view=f"{schema}.{table.name}")
+            if (
+                schema
+                and schema.upper() == context.info_schema_manager.info_schema_name
+            ):
+                return context.info_schema_manager.describe_info_schema_sql(
+                    view=f"{schema}.{table.name}"
+                )
 
-            return context.info_schema_manager.describe_table_sql(database=database, schema=schema, table=table.name)
-    
-    return expression.sql(dialect="duckdb") 
+            return context.info_schema_manager.describe_table_sql(
+                database=database, schema=schema, table=table.name
+            )
+
+    return expression.sql(dialect="duckdb")
 
 
 def transform_use(expression: exp.Use, context: DialectContext) -> str:
@@ -88,10 +95,14 @@ def transform_use(expression: exp.Use, context: DialectContext) -> str:
         return f"SET schema = '{database}.PUBLIC'"
 
     elif kind.name.upper() == "SCHEMA":
-        db_name = expression.this.args.get("db").name if expression.this.args.get("db") else context.current_database
+        db_name = (
+            expression.this.args.get("db").name
+            if expression.this.args.get("db")
+            else context.current_database
+        )
         schema = expression.this.name
         assert db_name, f"Database must be specified for schema '{schema}'"
-        
+
         return f"SET schema = '{db_name}.{schema}'"
 
     return expression.sql(dialect="duckdb")
@@ -119,7 +130,9 @@ def transform_show(expression: exp.Show, context: DialectContext) -> str:
                 schema = scope.this.name
                 if isinstance(scope.db, exp.Identifier):
                     database = scope.db.name
-        return context.info_schema_manager.show_objects_sql(database=database, schema=schema)
+        return context.info_schema_manager.show_objects_sql(
+            database=database, schema=schema
+        )
 
     return expression.sql(dialect="duckdb")
 
@@ -129,10 +142,14 @@ def transform_lateral(expression: exp.Lateral, context: DialectContext) -> str:
     if isinstance(expression.this, exp.Explode):
         kwarg = expression.this.args.get("this")
         input_expr = kwarg.expression if isinstance(kwarg, exp.Kwarg) else kwarg
-        input_sql = input_expr.sql(dialect="duckdb") if input_expr is not None else "NULL"
+        input_sql = (
+            input_expr.sql(dialect="duckdb") if input_expr is not None else "NULL"
+        )
 
         alias = expression.args.get("alias")
-        alias_name = alias.this.sql(dialect="duckdb") if alias and alias.this else "_flattened"
+        alias_name = (
+            alias.this.sql(dialect="duckdb") if alias and alias.this else "_flattened"
+        )
         return f"LATERAL UNNEST({input_sql}) AS {alias_name}(VALUE)"
 
     return expression.sql(dialect="duckdb")
@@ -164,8 +181,9 @@ def transform_copy(expression: exp.Copy, context: DialectContext) -> str:
     return f"COPY {table_sql} FROM '{source_path}'"
 
 
-
-def transform_current_session_info(expression: exp.Select, context: DialectContext) -> str:
+def transform_current_session_info(
+    expression: exp.Select, context: DialectContext
+) -> str:
     """Transform session-related functions to DuckDB-compatible SQL. Returns original SQL if no transformations occur."""
     transformed = False
     select_expressions = []

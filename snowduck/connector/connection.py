@@ -13,7 +13,7 @@ from .cursor import Cursor
 
 class Connection:
     def __init__(
-        self, 
+        self,
         duck_conn: DuckDBPyConnection,
         info_schema_manager: InfoSchemaManager,
         database: str | None = None,
@@ -30,8 +30,10 @@ class Connection:
         self._schema: str | None = None
         self._role: str | None = None
         self._warehouse: str | None = None
-        self._session_variables: dict[str, str] = {}  # Session variables (SET var = value)
-        
+        self._session_variables: dict[
+            str, str
+        ] = {}  # Session variables (SET var = value)
+
         if database:
             self.use_database(database)
         if schema:
@@ -49,7 +51,7 @@ class Connection:
 
         if self._database:
             self._info_schema_manager.create_database_information_schema(
-                database=self._database, 
+                database=self._database,
                 schema=self._schema,
             )
             self._set_duckdb_schema()
@@ -76,13 +78,15 @@ class Connection:
         Returns a new Cursor object for executing queries.
         """
         if self._is_closed:
-            raise snowflake.connector.errors.DatabaseError("250002 (08003): Connection is closed")
-        
+            raise snowflake.connector.errors.DatabaseError(
+                "250002 (08003): Connection is closed"
+            )
+
         return Cursor(
-            sf_conn=self, 
-            duck_conn=self._duck_conn, 
+            sf_conn=self,
+            duck_conn=self._duck_conn,
             info_schema_manager=self._info_schema_manager,
-            use_dict_result=cursor_class==DictCursor,
+            use_dict_result=cursor_class == DictCursor,
         )
 
     def execute_string(
@@ -122,7 +126,7 @@ class Connection:
             schema=self._schema,
             table=table,
         )
-    
+
     def rollback(self) -> None:
         self.cursor().execute("ROLLBACK")
 
@@ -132,14 +136,14 @@ class Connection:
         """
         self._duck_conn.close()
         self._is_closed = True
-        
+
     def is_closed(self) -> bool:
         return self._is_closed
-    
+
     @property
     def database(self) -> str | None:
         return self._database
-    
+
     def use_database(self, database: str) -> None:
         """Sets the current database."""
         self._database = database.upper() if database else None
@@ -150,15 +154,21 @@ class Connection:
                 schema=self._schema,
             )
         self._set_duckdb_schema()
-    
+
     @property
     def schema(self) -> str | None:
-        return "INFORMATION_SCHEMA" if self._schema == self._info_schema_manager.info_schema_name else self._schema
-    
+        return (
+            "INFORMATION_SCHEMA"
+            if self._schema == self._info_schema_manager.info_schema_name
+            else self._schema
+        )
+
     def use_schema(self, schema: str) -> None:
         """Sets the current schema."""
         self._schema = (
-            self._info_schema_manager.info_schema_name if schema.upper() == "INFORMATION_SCHEMA" else schema.upper()
+            self._info_schema_manager.info_schema_name
+            if schema.upper() == "INFORMATION_SCHEMA"
+            else schema.upper()
         )
         self._set_duckdb_schema()
 

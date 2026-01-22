@@ -37,7 +37,7 @@ class SessionManager:
     def session_exists(self, token: str) -> bool:
         """Checks if a session exists for the given token."""
         return token in self._sessions
-    
+
     def get_lock(self, token: str) -> asyncio.Lock:
         """Gets the lock for a session."""
         if token not in self._locks:

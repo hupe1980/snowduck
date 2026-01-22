@@ -16,6 +16,7 @@ def test_create_transformation(dialect_context):
     transformed_sql = transform_create(expression, context=dialect_context)
     assert transformed_sql == "ATTACH DATABASE ':memory:' AS foo"
 
+
 def test_describe_transformation(dialect_context):
     expression = parse_one("DESCRIBE TABLE foo", read="snowflake")
     transformed_sql = transform_describe(expression, context=dialect_context)
@@ -25,15 +26,18 @@ def test_describe_transformation(dialect_context):
         table="foo",
     )
 
+
 def test_use_database_transformation(dialect_context):
     expression = parse_one("USE DATABASE foo", read="snowflake")
     transformed_sql = transform_use(expression, context=dialect_context)
     assert transformed_sql == "SET schema = 'foo.PUBLIC'"
 
+
 def test_show_transformation(dialect_context):
     expression = parse_one("SHOW DATABASES", read="snowflake")
     transformed_sql = transform_show(expression, context=dialect_context)
     assert transformed_sql == dialect_context.info_schema_manager.show_databases_sql()
+
 
 def test_show_schemas_transformation(dialect_context):
     expression = parse_one("SHOW SCHEMAS", read="snowflake")
@@ -42,13 +46,17 @@ def test_show_schemas_transformation(dialect_context):
         database=dialect_context.current_database,
     )
 
+
 def test_show_objects_transformation(dialect_context):
-    expression = parse_one("SHOW OBJECTS IN SCHEMA test_db.test_schema", read="snowflake")
+    expression = parse_one(
+        "SHOW OBJECTS IN SCHEMA test_db.test_schema", read="snowflake"
+    )
     transformed_sql = transform_show(expression, context=dialect_context)
     assert transformed_sql == dialect_context.info_schema_manager.show_objects_sql(
         database="test_db",
         schema="test_schema",
     )
+
 
 def test_transform_current_session_info(dialect_context):
     # Input SQL

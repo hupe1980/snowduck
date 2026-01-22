@@ -23,11 +23,12 @@ def test_row_number(dialect_context):
     ORDER BY col1
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     assert res[0][1] == 1
@@ -43,11 +44,12 @@ def test_rank(dialect_context):
     ORDER BY col1
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     assert res[0][1] == 1  # First value
@@ -64,11 +66,12 @@ def test_dense_rank(dialect_context):
     ORDER BY col1
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     assert res[0][1] == 1  # First value
@@ -87,11 +90,12 @@ def test_lead_lag(dialect_context):
     ORDER BY col1
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     # First row: prev=NULL, next=2
@@ -115,11 +119,12 @@ def test_first_value_last_value(dialect_context):
     ORDER BY col1
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     # All rows should have first=1 and last=3
@@ -136,11 +141,12 @@ def test_ntile(dialect_context):
     ORDER BY col1
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     # Should divide into 4 buckets
@@ -159,18 +165,19 @@ def test_partition_by(dialect_context):
     ORDER BY grp, val
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     # Each partition should restart numbering
-    assert res[0] == ('A', 1, 1)
-    assert res[1] == ('A', 2, 2)
-    assert res[2] == ('B', 1, 1)
-    assert res[3] == ('B', 2, 2)
+    assert res[0] == ("A", 1, 1)
+    assert res[1] == ("A", 2, 2)
+    assert res[2] == ("B", 1, 1)
+    assert res[3] == ("B", 2, 2)
 
 
 def test_sum_over_window(dialect_context):
@@ -182,11 +189,12 @@ def test_sum_over_window(dialect_context):
     ORDER BY col1
     """
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     transpiled = expression.sql(dialect=dialect)
-    
+
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchall()
     # Running sum: 1, 3, 6, 10

@@ -12,7 +12,7 @@ def test_query_format_inferred_from_user_agent():
         token = login_resp.json()["data"]["token"]
 
         headers = {
-            "Authorization": f"Snowflake Token=\"{token}\"",
+            "Authorization": f'Snowflake Token="{token}"',
             "User-Agent": "snowflake-connector-nodejs/1.11.0",
         }
 

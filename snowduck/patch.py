@@ -45,7 +45,9 @@ def write_pandas(
                 else:
                     relation.create_view(temp_name)
                 view_created = True
-                duck_conn.execute(f"INSERT INTO {qualified_table} SELECT * FROM {temp_name}")
+                duck_conn.execute(
+                    f"INSERT INTO {qualified_table} SELECT * FROM {temp_name}"
+                )
                 return True, 1, len(df), []
             except Exception:
                 view_created = False
@@ -60,11 +62,12 @@ def write_pandas(
 
     return True, 1, len(df), []
 
+
 @contextmanager
-def patch_snowflake(db_file: str = ':memory:', reset: bool = False):
+def patch_snowflake(db_file: str = ":memory:", reset: bool = False):
     """
     Context manager to patch Snowflake-related functionality with SnowDuck.
-    
+
     Args:
         db_file: Path to DuckDB database file. Use ':memory:' for in-memory (default),
                  or provide a file path for persistent storage (e.g., 'test_data.duckdb').
@@ -72,18 +75,18 @@ def patch_snowflake(db_file: str = ':memory:', reset: bool = False):
     """
     import glob
     import os
-    
-    if reset and db_file != ':memory:':
+
+    if reset and db_file != ":memory:":
         # Delete the main file and any related files (.wal, .tmp, etc.)
         for pattern in [db_file, f"{db_file}.wal", f"{db_file}.tmp"]:
             for file in glob.glob(pattern):
                 if os.path.exists(file):
                     os.remove(file)
-    
+
     connector = Connector(db_file=db_file)
     targets = {
-        'snowflake.connector.connect': connector.connect,
-        'snowflake.connector.pandas_tools.write_pandas': write_pandas,
+        "snowflake.connector.connect": connector.connect,
+        "snowflake.connector.pandas_tools.write_pandas": write_pandas,
     }
 
     with ExitStack() as stack:
@@ -96,24 +99,24 @@ def patch_snowflake(db_file: str = ':memory:', reset: bool = False):
             connector.close()
 
 
-def start_patch_snowflake(db_file: str = ':memory:', reset: bool = False):
+def start_patch_snowflake(db_file: str = ":memory:", reset: bool = False):
     """
     Start the Snowflake patching context and register cleanup.
-    
+
     Args:
         db_file: Path to DuckDB database file. Use ':memory:' for in-memory (default),
                  or provide a file path for persistent storage (e.g., 'test_data.duckdb').
         reset: If True, deletes the database file before starting (default: False).
                Useful for notebooks/scripts that need a fresh start.
-    
+
     Example::
-    
+
         # In-memory (data lost on exit):
         start_patch_snowflake()
-        
+
         # Persistent storage (data saved to file):
         start_patch_snowflake(db_file='my_test_data.duckdb')
-        
+
         # Fresh start (delete existing file):
         start_patch_snowflake(db_file='test.duckdb', reset=True)
     """
