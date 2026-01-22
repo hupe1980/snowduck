@@ -38,14 +38,14 @@ def preprocess_semi_structured(
             parts = []
             for node in path.expressions:
                 if isinstance(node, exp.JSONPathRoot):
-                    parts.append('$')
+                    parts.append("$")
                 elif isinstance(node, exp.JSONPathKey):
-                    parts.append(f'.{node.this}')
+                    parts.append(f".{node.this}")
                 elif isinstance(node, exp.JSONPathSubscript):
-                    parts.append(f'[{node.this}]')
+                    parts.append(f"[{node.this}]")
                 else:
                     parts.append(str(node))
-            path_str = ''.join(parts)
+            path_str = "".join(parts)
             path = exp.Literal.string(path_str)
         return exp.Anonymous(this="json_extract_string", expressions=[json_obj, path])
 
@@ -61,14 +61,14 @@ def preprocess_semi_structured(
             parts = []
             for node in path.expressions:
                 if isinstance(node, exp.JSONPathRoot):
-                    parts.append('$')
+                    parts.append("$")
                 elif isinstance(node, exp.JSONPathKey):
-                    parts.append(f'.{node.this}')
+                    parts.append(f".{node.this}")
                 elif isinstance(node, exp.JSONPathSubscript):
-                    parts.append(f'[{node.this}]')
+                    parts.append(f"[{node.this}]")
                 else:
                     parts.append(str(node))
-            path_str = ''.join(parts)
+            path_str = "".join(parts)
             path = exp.Literal.string(path_str)
         return exp.Anonymous(this="json_extract_string", expressions=[json_obj, path])
 
@@ -110,7 +110,7 @@ def preprocess_semi_structured(
     # Handle explicit function calls (e.g. ARRAY_CONSTRUCT is parsed as exp.Array usually?)
     if isinstance(expression, exp.Anonymous):
         fname = expression.this.upper()
-        
+
         # JSON functions
         if fname == "PARSE_JSON":
             # PARSE_JSON(str) -> CAST(str AS JSON)
@@ -128,10 +128,12 @@ def preprocess_semi_structured(
                 # Convert path to JSONPath format (add $. prefix if not present)
                 if isinstance(path, exp.Literal) and isinstance(path.this, str):
                     path_str = path.this
-                    if not path_str.startswith('$'):
-                        path_str = '$.' + path_str
+                    if not path_str.startswith("$"):
+                        path_str = "$." + path_str
                     path = exp.Literal.string(path_str)
-                return exp.Anonymous(this="json_extract_string", expressions=[json_obj, path])
+                return exp.Anonymous(
+                    this="json_extract_string", expressions=[json_obj, path]
+                )
         elif fname == "JSON_EXTRACT_PATH_TEXT":
             # JSON_EXTRACT_PATH_TEXT(json, 'key1', 'key2') -> json_extract_string(json, '$.key1.key2')
             # json_extract_string returns unquoted text values
@@ -143,9 +145,12 @@ def preprocess_semi_structured(
                 for key in keys:
                     if isinstance(key, exp.Literal):
                         key_strs.append(str(key.this))
-                path = '$.' + '.'.join(key_strs)
-                return exp.Anonymous(this="json_extract_string", expressions=[json_obj, exp.Literal.string(path)])
-        
+                path = "$." + ".".join(key_strs)
+                return exp.Anonymous(
+                    this="json_extract_string",
+                    expressions=[json_obj, exp.Literal.string(path)],
+                )
+
         # ARRAY functions
         elif fname == "ARRAY_CONSTRUCT":
             return exp.Array(expressions=expression.expressions)
@@ -157,16 +162,23 @@ def preprocess_semi_structured(
                 value = expression.expressions[0]
                 array = expression.expressions[1]
                 # Get 1-based index from DuckDB
-                indexof_call = exp.Anonymous(this="list_indexof", expressions=[array, value])
+                indexof_call = exp.Anonymous(
+                    this="list_indexof", expressions=[array, value]
+                )
                 # Return NULL if not found (index = 0), else return index - 1 for 0-based
                 return exp.Case(
                     ifs=[
                         exp.If(
-                            this=exp.EQ(this=indexof_call.copy(), expression=exp.Literal.number(0)),
+                            this=exp.EQ(
+                                this=indexof_call.copy(),
+                                expression=exp.Literal.number(0),
+                            ),
                             true=exp.Null(),
                         )
                     ],
-                    default=exp.Sub(this=indexof_call, expression=exp.Literal.number(1)),
+                    default=exp.Sub(
+                        this=indexof_call, expression=exp.Literal.number(1)
+                    ),
                 )
         elif fname == "GET" and len(expression.expressions) == 2:
             # GET(array, index) -> array[index]
@@ -187,7 +199,9 @@ def preprocess_semi_structured(
                 # Add 1 to convert from 0-based (Snowflake) to 1-based (DuckDB)
                 start_plus_1 = exp.Add(this=start, expression=exp.Literal.number(1))
                 end_plus_1 = exp.Add(this=end, expression=exp.Literal.number(1))
-                return exp.Anonymous(this="list_slice", expressions=[array, start_plus_1, end_plus_1])
+                return exp.Anonymous(
+                    this="list_slice", expressions=[array, start_plus_1, end_plus_1]
+                )
         elif fname == "ARRAY_COMPACT":
             # ARRAY_COMPACT(array) -> list_filter(array, x -> x IS NOT NULL)
             if len(expression.expressions) == 1:
@@ -196,13 +210,14 @@ def preprocess_semi_structured(
                 lambda_expr = exp.Lambda(
                     this=exp.Not(
                         this=exp.Is(
-                            this=exp.Identifier(this="x"),
-                            expression=exp.Null()
+                            this=exp.Identifier(this="x"), expression=exp.Null()
                         )
                     ),
-                    expressions=[exp.Identifier(this="x")]
+                    expressions=[exp.Identifier(this="x")],
                 )
-                return exp.Anonymous(this="list_filter", expressions=[array, lambda_expr])
+                return exp.Anonymous(
+                    this="list_filter", expressions=[array, lambda_expr]
+                )
         elif fname == "FLATTEN" or fname == "TABLE":
             # FLATTEN or TABLE(FLATTEN(...)) -> unnest
             # This is tricky because it's a table function
@@ -227,12 +242,14 @@ def preprocess_semi_structured(
                 array_expr = array_expr.expression
             # Transform to subquery with UNNEST aliased as 'value'
             # DuckDB: (SELECT UNNEST([1,2,3]) AS value) AS _flatten
-            subquery = exp.Select(expressions=[
-                exp.Alias(
-                    this=exp.Unnest(expressions=[array_expr]),
-                    alias=exp.Identifier(this="value")
-                )
-            ])
+            subquery = exp.Select(
+                expressions=[
+                    exp.Alias(
+                        this=exp.Unnest(expressions=[array_expr]),
+                        alias=exp.Identifier(this="value"),
+                    )
+                ]
+            )
             return exp.Subquery(this=subquery, alias=exp.Identifier(this="_flatten"))
 
     # Handle ArraySlice - sqlglot parses this as exp.ArraySlice, not Anonymous
@@ -247,7 +264,9 @@ def preprocess_semi_structured(
             # Add 1 to convert from 0-based (Snowflake) to 1-based (DuckDB)
             start_plus_1 = exp.Add(this=start, expression=exp.Literal.number(1))
             end_plus_1 = exp.Add(this=end, expression=exp.Literal.number(1))
-            return exp.Anonymous(this="list_slice", expressions=[array, start_plus_1, end_plus_1])
+            return exp.Anonymous(
+                this="list_slice", expressions=[array, start_plus_1, end_plus_1]
+            )
 
     # Handle Snowflake semi-structured types in DDL -> Convert appropriately
     # Snowflake: ARRAY, VARIANT, OBJECT are semi-structured types

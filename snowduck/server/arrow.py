@@ -145,7 +145,9 @@ def timestamp_to_sf_struct(ts: pa.Array | pa.ChunkedArray) -> pa.Array:
 
     if ts.type.tz:
         if ts.type.tz != "UTC":
-            raise ValueError(f"Unsupported timezone: {ts.type.tz}. Only UTC is supported.")
+            raise ValueError(
+                f"Unsupported timezone: {ts.type.tz}. Only UTC is supported."
+            )
         timezone = pa.array([1440] * len(ts), type=pa.int32())
 
         return pa.StructArray.from_arrays(

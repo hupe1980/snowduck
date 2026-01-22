@@ -9,21 +9,21 @@ def preprocess_special_expressions(
     expression: exp.Expression, context: DialectContext
 ) -> exp.Expression:
     """Transform special expression types that aren't Anonymous functions."""
-    
+
     if isinstance(expression, exp.Space):
         # SPACE(n) -> REPEAT(' ', n) in DuckDB
         return exp.Anonymous(
             this="repeat",
             expressions=[exp.Literal.string(" "), expression.this],
         )
-    
+
     if isinstance(expression, exp.AddMonths):
         # ADD_MONTHS(date, months) -> date + INTERVAL months MONTH
         date_expr = expression.this
         months = expression.expression
         interval = exp.Interval(this=months, unit=exp.Var(this="MONTH"))
         return exp.Add(this=date_expr, expression=interval)
-    
+
     if isinstance(expression, exp.ObjectInsert):
         # OBJECT_INSERT(obj, key, value) -> json_merge_patch(obj, json_object(key, value))
         obj_expr = expression.this
@@ -31,10 +31,14 @@ def preprocess_special_expressions(
         val_expr = expression.args.get("value")
         if obj_expr and key_expr and val_expr:
             # Create json_object(key, value)
-            new_obj = exp.Anonymous(this="json_object", expressions=[key_expr, val_expr])
+            new_obj = exp.Anonymous(
+                this="json_object", expressions=[key_expr, val_expr]
+            )
             # Merge with original using json_merge_patch
-            return exp.Anonymous(this="json_merge_patch", expressions=[obj_expr, new_obj])
-    
+            return exp.Anonymous(
+                this="json_merge_patch", expressions=[obj_expr, new_obj]
+            )
+
     return expression
 
 
@@ -42,11 +46,11 @@ def preprocess_regexp_replace(
     expression: exp.Expression, context: DialectContext
 ) -> exp.Expression:
     """Transform REGEXP_REPLACE to preserve the 'g' flag for global replacement.
-    
+
     Snowflake's REGEXP_REPLACE has syntax:
         REGEXP_REPLACE(subject, pattern, replacement, position, occurrence, parameters)
     Where position=1 by default, occurrence=0 means all, parameters='c' (case-sensitive).
-    
+
     When 'g' is passed as the 4th argument (position), sqlglot misinterprets it.
     DuckDB supports: REGEXP_REPLACE(string, pattern, replacement, options)
     where options can include 'g' for global replacement.
@@ -69,15 +73,14 @@ def preprocess_bitwise(
     expression: exp.Expression, context: DialectContext
 ) -> exp.Expression:
     """Transform bitwise operations for DuckDB compatibility.
-    
+
     DuckDB uses `xor()` function instead of `^` operator for XOR
     (because `^` is power in DuckDB).
     """
     if isinstance(expression, exp.BitwiseXor):
         # Convert BitwiseXor to xor(a, b) function call
         return exp.Anonymous(
-            this="xor",
-            expressions=[expression.this, expression.expression]
+            this="xor", expressions=[expression.this, expression.expression]
         )
     return expression
 
@@ -189,7 +192,9 @@ def preprocess_seq_functions(
                 # This is equivalent to assigning to buckets 1..num_buckets
                 # Use Paren for grouping to ensure correct operator precedence
                 expr_minus_min = exp.Paren(this=exp.Sub(this=expr, expression=min_val))
-                max_minus_min = exp.Paren(this=exp.Sub(this=max_val, expression=min_val))
+                max_minus_min = exp.Paren(
+                    this=exp.Sub(this=max_val, expression=min_val)
+                )
                 # (expr - min) * num_buckets
                 numerator = exp.Mul(this=expr_minus_min, expression=num_buckets)
                 # (expr - min) * num_buckets / (max - min)
@@ -357,7 +362,7 @@ def preprocess_seq_functions(
                 return exp.Anonymous(this="ends_with", expressions=args)
 
         # =========================================================================
-        # DATE/TIME CONSTRUCTION FUNCTIONS  
+        # DATE/TIME CONSTRUCTION FUNCTIONS
         # =========================================================================
         elif fname == "DATE_FROM_PARTS":
             # DATE_FROM_PARTS(year, month, day) -> make_date(year, month, day)
@@ -709,14 +714,12 @@ def preprocess_seq_functions(
                 # Build: list_filter(arr1, x -> NOT list_contains(arr2, x))
                 lambda_param = exp.Identifier(this="x")
                 list_contains_call = exp.Anonymous(
-                    this="list_contains", 
-                    expressions=[arr2, lambda_param]
+                    this="list_contains", expressions=[arr2, lambda_param]
                 )
                 negated = exp.Not(this=list_contains_call)
                 lambda_expr = exp.Lambda(this=negated, expressions=[lambda_param])
                 return exp.Anonymous(
-                    this="list_filter", 
-                    expressions=[arr1, lambda_expr]
+                    this="list_filter", expressions=[arr1, lambda_expr]
                 )
 
         elif fname == "ARRAY_INTERSECTION":
@@ -728,13 +731,13 @@ def preprocess_seq_functions(
                 # Build: list_filter(arr1, x -> list_contains(arr2, x))
                 lambda_param = exp.Identifier(this="x")
                 list_contains_call = exp.Anonymous(
-                    this="list_contains", 
-                    expressions=[arr2, lambda_param]
+                    this="list_contains", expressions=[arr2, lambda_param]
                 )
-                lambda_expr = exp.Lambda(this=list_contains_call, expressions=[lambda_param])
+                lambda_expr = exp.Lambda(
+                    this=list_contains_call, expressions=[lambda_param]
+                )
                 return exp.Anonymous(
-                    this="list_filter", 
-                    expressions=[arr1, lambda_expr]
+                    this="list_filter", expressions=[arr1, lambda_expr]
                 )
 
         elif fname == "ARRAY_DISTINCT":
@@ -764,8 +767,7 @@ def preprocess_seq_functions(
                 # timezone(target_tz, timezone('UTC', timezone(source_tz, ts)))
                 in_source = exp.Anonymous(this="timezone", expressions=[source_tz, ts])
                 in_utc = exp.Anonymous(
-                    this="timezone", 
-                    expressions=[exp.Literal.string("UTC"), in_source]
+                    this="timezone", expressions=[exp.Literal.string("UTC"), in_source]
                 )
                 return exp.Anonymous(this="timezone", expressions=[target_tz, in_utc])
 
@@ -783,7 +785,7 @@ def preprocess_seq_functions(
                 return exp.Anonymous(this="sha256", expressions=[blob_cast])
 
         elif fname == "SHA1":
-            # SHA1(str) -> sha1(str::BLOB) 
+            # SHA1(str) -> sha1(str::BLOB)
             args = expression.expressions
             if len(args) == 1:
                 str_expr = args[0]

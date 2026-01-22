@@ -285,11 +285,13 @@ def test_information_schema_cross_database():
     cur.execute("USE DATABASE db1")
 
     # Should see both databases from any context
-    cur.execute("SELECT database_name FROM information_schema.databases ORDER BY database_name")
-    
+    cur.execute(
+        "SELECT database_name FROM information_schema.databases ORDER BY database_name"
+    )
+
     # Get all database names
     dbs = [row[0] for row in cur.fetchall()]
-    
+
     # Should contain our created databases (uppercased)
     assert "DB1" in dbs
     assert "DB2" in dbs
@@ -298,7 +300,7 @@ def test_information_schema_cross_database():
 @mock_snowflake
 def test_describe_table_with_nullability():
     """Test that DESCRIBE TABLE includes nullability information.
-    
+
     Note: Due to current database limitations, tables are created in 'memory' catalog.
     Testing DESCRIBE with explicit database.schema.table path.
     """
@@ -307,17 +309,17 @@ def test_describe_table_with_nullability():
 
     # Create table in the default database context
     cur.execute("CREATE TABLE test_desc (id INT NOT NULL, name VARCHAR)")
-    
+
     # DESCRIBE should work with explicit database/schema path
     cur.execute("DESCRIBE TABLE memory.main.test_desc")
 
     results = cur.fetchall()
     assert len(results) >= 2  # At least id and name columns
-    
+
     # Verify nullability information is present
     column_names = [row[0] for row in results]
-    assert 'id' in column_names or 'ID' in column_names
-    assert 'name' in column_names or 'NAME' in column_names
+    assert "id" in column_names or "ID" in column_names
+    assert "name" in column_names or "NAME" in column_names
 
 
 @mock_snowflake
@@ -437,7 +439,7 @@ def test_seed_table_with_special_sql_characters():
 
     data = {
         "id": [1, 2, 3],
-        "text": ["It's nice", 'He said "hello"', "Mix'd \"quotes\""],
+        "text": ["It's nice", 'He said "hello"', 'Mix\'d "quotes"'],
     }
 
     seed_table(conn, "special_chars", data)
@@ -448,4 +450,4 @@ def test_seed_table_with_special_sql_characters():
 
     assert results[0][0] == "It's nice"
     assert results[1][0] == 'He said "hello"'
-    assert results[2][0] == "Mix'd \"quotes\""
+    assert results[2][0] == 'Mix\'d "quotes"'

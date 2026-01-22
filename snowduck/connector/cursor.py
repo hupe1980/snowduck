@@ -195,35 +195,35 @@ class Cursor:
     def _preprocess_json_extract_path_text(self, sql: str) -> str:
         """
         Pre-process JSON_EXTRACT_PATH_TEXT to convert multiple keys into a single JSONPath.
-        
+
         Snowflake parser has a bug where it only includes the first key, so we need to
         transform the SQL string before parsing.
-        
+
         Example:
             JSON_EXTRACT_PATH_TEXT(json, 'a', 'b', 'c')
             -> GET_PATH(json, 'a.b.c')
         """
         import re
-        
+
         # Match JSON_EXTRACT_PATH_TEXT(arg1, 'key1', 'key2', ...)
         pattern = r"JSON_EXTRACT_PATH_TEXT\s*\(\s*([^,]+)\s*,\s*(.+?)\s*\)"
-        
+
         def replace_func(match):
             json_arg = match.group(1)
             keys_str = match.group(2)
-            
+
             # Extract individual keys (quoted strings)
             keys = re.findall(r"'([^']+)'", keys_str)
-            
+
             if not keys:
                 return match.group(0)  # No change if no keys found
-            
+
             # Build the path
-            path = '.'.join(keys)
-            
+            path = ".".join(keys)
+
             # Use GET_PATH which will be properly handled by preprocessor
             return f"GET_PATH({json_arg}, '{path}')"
-        
+
         return re.sub(pattern, replace_func, sql, flags=re.IGNORECASE | re.DOTALL)
 
     def execute(
@@ -563,20 +563,20 @@ class Cursor:
     def fetch_pandas_all(self, **kwargs: Any) -> "pd.DataFrame":
         """
         Fetch all rows as a pandas DataFrame.
-        
+
         This matches Snowflake's cursor.fetch_pandas_all() method.
-        
+
         Returns:
             pandas.DataFrame: All remaining rows as a DataFrame.
         """
-        
+
         if self._arrow_table is None:
             raise TypeError("No open result set")
-        
+
         # Return remaining rows from current index
         remaining = self._arrow_table.slice(
             offset=self._arrow_table_fetch_index,
-            length=self._arrow_table.num_rows - self._arrow_table_fetch_index
+            length=self._arrow_table.num_rows - self._arrow_table_fetch_index,
         )
         self._arrow_table_fetch_index = self._arrow_table.num_rows
         return remaining.to_pandas()
@@ -584,26 +584,25 @@ class Cursor:
     def fetch_pandas_batches(self, **kwargs: Any) -> "Iterator[pd.DataFrame]":
         """
         Fetch results as an iterator of pandas DataFrames.
-        
+
         This matches Snowflake's cursor.fetch_pandas_batches() method.
         Yields batches of rows as DataFrames.
-        
+
         Yields:
             pandas.DataFrame: Batches of rows as DataFrames.
         """
-        
+
         if self._arrow_table is None:
             raise TypeError("No open result set")
-        
+
         batch_size = kwargs.get("batch_size", 10000)
-        
+
         while self._arrow_table_fetch_index < self._arrow_table.num_rows:
             remaining = self._arrow_table.num_rows - self._arrow_table_fetch_index
             size = min(batch_size, remaining)
-            
+
             batch = self._arrow_table.slice(
-                offset=self._arrow_table_fetch_index,
-                length=size
+                offset=self._arrow_table_fetch_index, length=size
             )
             self._arrow_table_fetch_index += size
             yield batch.to_pandas()
@@ -611,7 +610,7 @@ class Cursor:
     def get_result_batches(self) -> list["pa.RecordBatch"]:
         """
         Get all Arrow result batches from the current result set.
-        
+
         Returns:
             list[pyarrow.RecordBatch]: List of Arrow record batches.
         """

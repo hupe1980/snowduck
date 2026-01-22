@@ -22,6 +22,7 @@ def dialect_context():
 def test_abs(dialect_context):
     """Test ABS function - absolute value."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -36,6 +37,7 @@ def test_abs(dialect_context):
 def test_ceil_floor(dialect_context):
     """Test CEIL and FLOOR functions."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -51,6 +53,7 @@ def test_round(dialect_context):
     """Test ROUND function with precision."""
 
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -66,6 +69,7 @@ def test_round(dialect_context):
 def test_trunc(dialect_context):
     """Test TRUNC/TRUNCATE function."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -80,6 +84,7 @@ def test_trunc(dialect_context):
 def test_mod(dialect_context):
     """Test MOD function - modulo operation."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -93,6 +98,7 @@ def test_mod(dialect_context):
 def test_sign(dialect_context):
     """Test SIGN function - returns -1, 0, or 1."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -108,6 +114,7 @@ def test_sign(dialect_context):
 def test_sqrt(dialect_context):
     """Test SQRT function - square root."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -121,6 +128,7 @@ def test_sqrt(dialect_context):
 def test_power(dialect_context):
     """Test POWER/POW function - exponentiation."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -134,6 +142,7 @@ def test_power(dialect_context):
 def test_log_ln(dialect_context):
     """Test LOG and LN functions."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -148,6 +157,7 @@ def test_log_ln(dialect_context):
 def test_exp(dialect_context):
     """Test EXP function - e raised to power."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -161,6 +171,7 @@ def test_exp(dialect_context):
 def test_greatest_least(dialect_context):
     """Test GREATEST and LEAST functions."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -175,6 +186,7 @@ def test_greatest_least(dialect_context):
 def test_div0(dialect_context):
     """Test DIV0 function - division that returns 0 instead of error on divide by zero."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -189,6 +201,7 @@ def test_div0(dialect_context):
 def test_div0null(dialect_context):
     """Test DIV0NULL function - returns NULL instead of error on divide by zero."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -203,26 +216,27 @@ def test_div0null(dialect_context):
 def test_width_bucket(dialect_context):
     """Test WIDTH_BUCKET function - histogram binning."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
     # WIDTH_BUCKET(expr, min, max, num_buckets)
     # Buckets: 0 (below min), 1-num_buckets (within range), num_buckets+1 (above max)
-    
+
     # Value 5 in range 0-10 with 5 buckets -> bucket 3
     sql = "SELECT WIDTH_BUCKET(5, 0, 10, 5)"
     expression = parse_one(sql, read="snowflake")
     transpiled = expression.sql(dialect=dialect)
     res = conn.execute(transpiled).fetchone()
     assert int(res[0]) == 3
-    
+
     # Value below min -> bucket 0
     sql = "SELECT WIDTH_BUCKET(-1, 0, 10, 5)"
     expression = parse_one(sql, read="snowflake")
     transpiled = expression.sql(dialect=dialect)
     res = conn.execute(transpiled).fetchone()
     assert int(res[0]) == 0
-    
+
     # Value at/above max -> bucket num_buckets + 1
     sql = "SELECT WIDTH_BUCKET(10, 0, 10, 5)"
     expression = parse_one(sql, read="snowflake")
@@ -234,6 +248,7 @@ def test_width_bucket(dialect_context):
 def test_random(dialect_context):
     """Test RANDOM function."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -248,6 +263,7 @@ def test_random(dialect_context):
 def test_bitwise_operations(dialect_context):
     """Test bitwise operations - AND, OR, XOR, NOT."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 

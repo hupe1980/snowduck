@@ -17,22 +17,22 @@ class Connector:
         """
         self._timezone = timezone
         self._db_file = db_file
-        
+
         # Create a shared DuckDB connection for all connections within this Connector
         # This matches Snowflake behavior where connections in the same session share state
         self._duck_conn = duckdb.connect(database=self._db_file)
         self._duck_conn.execute(f"SET GLOBAL TimeZone = '{self._timezone}'")
-        
+
         # Register Snowflake-compatible macros once
         register_macros(self._duck_conn)
-        
+
         # Create shared InfoSchemaManager
         self._info_schema_manager = InfoSchemaManager(duck_conn=self._duck_conn)
 
     def connect(self, database: str | None = None, schema: str | None = None, **kwargs):
         """
         Create a new connection that shares the underlying DuckDB instance.
-        
+
         All connections within the same Connector share database state,
         matching Snowflake's session behavior.
         """
@@ -52,4 +52,3 @@ class Connector:
         if self._duck_conn:
             self._duck_conn.close()
             self._duck_conn = None
-

@@ -8,9 +8,9 @@ import pytest
 def test_parse_json_basic(conn):
     """Test PARSE_JSON with simple JSON string."""
     cur = conn.cursor()
-    cur.execute("SELECT PARSE_JSON('{\"name\": \"Alice\", \"age\": 30}')")
+    cur.execute('SELECT PARSE_JSON(\'{"name": "Alice", "age": 30}\')')
     result = cur.fetchone()[0]
-    
+
     # DuckDB returns JSON as string, parse it
     parsed = json.loads(result) if isinstance(result, str) else result
     assert parsed["name"] == "Alice"
@@ -28,12 +28,14 @@ def test_parse_json_with_column(conn):
             (1, '{"user": "alice", "score": 95}'),
             (2, '{"user": "bob", "score": 87}');
     """)
-    
+
     cur.execute("SELECT id, PARSE_JSON(data) FROM json_data ORDER BY id")
     results = cur.fetchall()
-    
+
     assert len(results) == 2
-    data1 = json.loads(results[0][1]) if isinstance(results[0][1], str) else results[0][1]
+    data1 = (
+        json.loads(results[0][1]) if isinstance(results[0][1], str) else results[0][1]
+    )
     assert data1["user"] == "alice"
 
 
@@ -94,15 +96,17 @@ def test_object_construct_from_columns(conn):
     cur.execute("""
         INSERT INTO users VALUES (1, 'Alice', 30), (2, 'Bob', 25);
     """)
-    
+
     cur.execute("""
         SELECT OBJECT_CONSTRUCT('id', id, 'name', name, 'age', age)
         FROM users
         ORDER BY id
     """)
     results = cur.fetchall()
-    
-    obj1 = json.loads(results[0][0]) if isinstance(results[0][0], str) else results[0][0]
+
+    obj1 = (
+        json.loads(results[0][0]) if isinstance(results[0][0], str) else results[0][0]
+    )
     assert obj1["name"] == "Alice"
     assert obj1["age"] == 30
 
@@ -113,7 +117,7 @@ def test_json_null_handling(conn):
     cur.execute("SELECT PARSE_JSON(NULL)")
     result = cur.fetchone()[0]
     assert result is None
-    
+
     cur.execute("SELECT GET_PATH(NULL, 'path')")
     result = cur.fetchone()[0]
     assert result is None
@@ -143,7 +147,7 @@ def test_nested_json_operations(conn):
             (1, '{"event": "login", "user": {"id": 123, "name": "Alice"}}'),
             (2, '{"event": "logout", "user": {"id": 456, "name": "Bob"}}');
     """)
-    
+
     cur.execute("""
         SELECT 
             id,
@@ -153,7 +157,7 @@ def test_nested_json_operations(conn):
         ORDER BY id
     """)
     results = cur.fetchall()
-    
+
     assert len(results) == 2
     assert results[0][1] == "login"
     assert results[0][2] == "Alice"

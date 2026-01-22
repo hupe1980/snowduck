@@ -140,9 +140,7 @@ class Dialect(DuckDB):
             expression = expression.transform(
                 preprocess_seq_functions, context=self._context
             )
-            expression = expression.transform(
-                preprocess_bitwise, context=self._context
-            )
+            expression = expression.transform(preprocess_bitwise, context=self._context)
             expression = expression.transform(
                 preprocess_regexp_replace, context=self._context
             )

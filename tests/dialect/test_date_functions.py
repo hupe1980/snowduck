@@ -88,6 +88,7 @@ def test_date_trunc(dialect_context):
 def test_current_date(dialect_context):
     """Test CURRENT_DATE function."""
     from datetime import date
+
     sql = "SELECT CURRENT_DATE()"
     expression = parse_one(sql, read="snowflake")
 
@@ -104,6 +105,7 @@ def test_current_date(dialect_context):
 def test_extract(dialect_context):
     """Test EXTRACT function."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -125,6 +127,7 @@ def test_extract(dialect_context):
 def test_year_month_day(dialect_context):
     """Test YEAR, MONTH, DAY convenience functions."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -140,6 +143,7 @@ def test_year_month_day(dialect_context):
 def test_last_day(dialect_context):
     """Test LAST_DAY function."""
     from datetime import date
+
     sql = "SELECT LAST_DAY(DATE '2024-02-15')"
     expression = parse_one(sql, read="snowflake")
 
@@ -157,6 +161,7 @@ def test_last_day(dialect_context):
 def test_dayofweek_dayofyear(dialect_context):
     """Test DAYOFWEEK and DAYOFYEAR functions."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -172,6 +177,7 @@ def test_dayofweek_dayofyear(dialect_context):
 def test_quarter(dialect_context):
     """Test QUARTER function."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 
@@ -185,6 +191,7 @@ def test_quarter(dialect_context):
 def test_hour_minute_second(dialect_context):
     """Test HOUR, MINUTE, SECOND functions."""
     from snowduck.dialect import Dialect
+
     dialect = Dialect(context=dialect_context)
     conn = duckdb.connect(":memory:")
 

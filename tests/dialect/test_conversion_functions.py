@@ -118,6 +118,7 @@ def test_cast_date(dialect_context):
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
     import datetime
+
     assert res[0] == datetime.date(2024, 1, 15)
 
 

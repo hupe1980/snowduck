@@ -4,7 +4,7 @@ from sqlglot import parse_one
 def test_parse_json_transformation(dialect_context):
     sql = "SELECT PARSE_JSON('{\"a\": 1}')"
     expression = parse_one(sql, read="snowflake")
-    
+
     from snowduck.dialect import Dialect
 
     dialect = Dialect(context=dialect_context)

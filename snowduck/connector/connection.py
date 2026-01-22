@@ -27,7 +27,9 @@ class Connection:
         self._duck_conn = duck_conn
         self._info_schema_manager = info_schema_manager
         self._is_closed = False
-        self._owns_duck_conn = owns_duck_conn  # If True, we close the DuckDB conn on close()
+        self._owns_duck_conn = (
+            owns_duck_conn  # If True, we close the DuckDB conn on close()
+        )
         self._database: str | None = None
         self._schema: str | None = None
         self._role: str | None = None

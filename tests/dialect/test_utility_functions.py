@@ -29,11 +29,13 @@ def test_uuid_string(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    
+
     # DuckDB returns UUID object, convert to string for validation
     uuid_str = str(res[0])
     # Verify it's a valid UUID format (8-4-4-4-12 hex characters)
-    uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    uuid_pattern = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
     assert uuid_pattern.match(uuid_str)
 
 
@@ -49,7 +51,7 @@ def test_uuid_uniqueness(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    
+
     # Two UUIDs should be different
     assert res[0] != res[1]
 
@@ -66,7 +68,7 @@ def test_typeof(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    
+
     # DuckDB returns type names
     assert "INT" in res[0].upper()
     assert "VARCHAR" in res[1].upper()
@@ -77,7 +79,7 @@ def test_typeof(dialect_context):
 def test_current_timestamp(dialect_context):
     """Test CURRENT_TIMESTAMP function."""
     from datetime import datetime
-    
+
     sql = "SELECT CURRENT_TIMESTAMP()"
     expression = parse_one(sql, read="snowflake")
 
@@ -88,7 +90,7 @@ def test_current_timestamp(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    
+
     # Should return a timestamp
     assert res[0] is not None
     assert res[0].year == datetime.now().year
@@ -106,7 +108,7 @@ def test_current_user(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    
+
     # DuckDB should return something (usually empty string or user)
     assert res[0] is not None
 

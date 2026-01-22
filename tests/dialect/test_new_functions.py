@@ -7,6 +7,7 @@ from sqlglot import parse_one
 # STRING FUNCTIONS
 # =============================================================================
 
+
 def test_initcap(conn):
     """Test INITCAP capitalizes first letter of each word."""
     with conn.cursor() as cursor:
@@ -117,6 +118,7 @@ def test_chr(dialect_context):
 # DATE/TIME CONSTRUCTION FUNCTIONS
 # =============================================================================
 
+
 def test_date_from_parts(dialect_context):
     """Test DATE_FROM_PARTS constructs a date."""
     sql = "SELECT DATE_FROM_PARTS(2024, 6, 15)"
@@ -165,6 +167,7 @@ def test_timestamp_from_parts(dialect_context):
 # =============================================================================
 # NUMERIC FUNCTIONS
 # =============================================================================
+
 
 def test_cbrt(dialect_context):
     """Test CBRT returns cube root."""
@@ -244,6 +247,7 @@ def test_pi(dialect_context):
 # =============================================================================
 # ARRAY FUNCTIONS
 # =============================================================================
+
 
 def test_array_cat(dialect_context):
     """Test ARRAY_CAT concatenates arrays."""
@@ -399,9 +403,10 @@ def test_array_position_null_return(dialect_context):
 # JSON FUNCTIONS
 # =============================================================================
 
+
 def test_object_keys(dialect_context):
     """Test OBJECT_KEYS returns array of keys."""
-    sql = "SELECT OBJECT_KEYS(PARSE_JSON('{\"a\": 1, \"b\": 2}'))"
+    sql = 'SELECT OBJECT_KEYS(PARSE_JSON(\'{"a": 1, "b": 2}\'))'
     expression = parse_one(sql, read="snowflake")
 
     from snowduck.dialect import Dialect
@@ -449,6 +454,7 @@ def test_check_json_invalid(dialect_context):
 # AGGREGATE FUNCTIONS
 # =============================================================================
 
+
 def test_any_value(dialect_context):
     """Test ANY_VALUE returns any value from group."""
     sql = "SELECT ANY_VALUE(x) FROM (SELECT 1 as x UNION ALL SELECT 1 as x)"
@@ -483,6 +489,7 @@ def test_kurtosis(dialect_context):
 # =============================================================================
 # MISCELLANEOUS FUNCTIONS
 # =============================================================================
+
 
 def test_zeroifnull(dialect_context):
     """Test ZEROIFNULL returns 0 for NULL."""
@@ -637,11 +644,11 @@ def test_iff(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT IFF(1 > 0, 'yes', 'no')")
         res = cursor.fetchone()
-        assert res[0] == 'yes'
+        assert res[0] == "yes"
 
         cursor.execute("SELECT IFF(1 < 0, 'yes', 'no')")
         res = cursor.fetchone()
-        assert res[0] == 'no'
+        assert res[0] == "no"
 
 
 def test_equal_null(conn):
@@ -721,7 +728,7 @@ def test_base64_encode(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT BASE64_ENCODE('hello')")
         res = cursor.fetchone()
-        assert res[0] == 'aGVsbG8='
+        assert res[0] == "aGVsbG8="
 
 
 def test_base64_decode(conn):
@@ -729,7 +736,7 @@ def test_base64_decode(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT BASE64_DECODE_STRING('aGVsbG8=')")
         res = cursor.fetchone()
-        assert res[0] == 'hello'
+        assert res[0] == "hello"
 
 
 # =============================================================================
@@ -742,7 +749,7 @@ def test_hex_encode(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT HEX_ENCODE('hello')")
         res = cursor.fetchone()
-        assert res[0].lower() == '68656c6c6f'  # 'hello' in hex
+        assert res[0].lower() == "68656c6c6f"  # 'hello' in hex
 
 
 def test_hex_decode_string(conn):
@@ -750,7 +757,7 @@ def test_hex_decode_string(conn):
     with conn.cursor() as cursor:
         cursor.execute("SELECT HEX_DECODE_STRING('68656c6c6f')")
         res = cursor.fetchone()
-        assert res[0] == 'hello'
+        assert res[0] == "hello"
 
 
 # =============================================================================
@@ -791,6 +798,7 @@ def test_object_insert(conn):
         """)
         res = cursor.fetchone()
         import json
+
         obj = json.loads(res[0])
-        assert obj['a'] == 1
-        assert obj['b'] == 2
+        assert obj["a"] == 1
+        assert obj["b"] == 2

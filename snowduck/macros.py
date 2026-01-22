@@ -55,9 +55,7 @@ _MACRO_DEFINITIONS = [
 ]
 
 
-def register_macros(
-    duck_conn: DuckDBPyConnection, database: str | None = None
-) -> None:
+def register_macros(duck_conn: DuckDBPyConnection, database: str | None = None) -> None:
     """Register Snowflake-compatible macros in the DuckDB connection.
 
     Args:

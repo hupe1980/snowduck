@@ -47,11 +47,13 @@ def transform_set(expression: exp.Expression, context: DialectContext) -> str:
 def transform_create(expression: exp.Create, context: DialectContext) -> str:
     """Custom transformation for CREATE DATABASE/SCHEMA to use uppercase identifiers."""
     kind = str(expression.args.get("kind")).upper()
-    
+
     if kind == "DATABASE":
         ident = expression.find(exp.Identifier)
         if not ident:
-            raise ValueError(f"No identifier found in CREATE DATABASE statement: {expression.sql}")
+            raise ValueError(
+                f"No identifier found in CREATE DATABASE statement: {expression.sql}"
+            )
 
         # Use uppercase for unquoted identifiers to match Snowflake behavior
         db_name = ident.this if ident.quoted else ident.this.upper()

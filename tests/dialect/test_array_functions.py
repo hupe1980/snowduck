@@ -1,7 +1,6 @@
 """Test Snowflake ARRAY function emulation."""
 
 
-
 def test_array_construct_basic(conn):
     """Test ARRAY_CONSTRUCT with literal values."""
     cur = conn.cursor()
@@ -15,7 +14,7 @@ def test_array_construct_mixed_types(conn):
     cur = conn.cursor()
     cur.execute("SELECT ARRAY_CONSTRUCT('a', 'b', 'c')")
     result = cur.fetchone()[0]
-    assert result == ['a', 'b', 'c']
+    assert result == ["a", "b", "c"]
 
 
 def test_array_construct_from_columns(conn):
@@ -25,10 +24,10 @@ def test_array_construct_from_columns(conn):
         CREATE TABLE data (a INT, b INT, c INT);
     """)
     cur.execute("INSERT INTO data VALUES (1, 2, 3), (4, 5, 6)")
-    
+
     cur.execute("SELECT ARRAY_CONSTRUCT(a, b, c) FROM data ORDER BY a")
     results = cur.fetchall()
-    
+
     assert results[0][0] == [1, 2, 3]
     assert results[1][0] == [4, 5, 6]
 
@@ -39,7 +38,7 @@ def test_array_size(conn):
     cur.execute("SELECT ARRAY_SIZE(ARRAY_CONSTRUCT(1, 2, 3, 4))")
     result = cur.fetchone()[0]
     assert result == 4
-    
+
     cur.execute("SELECT ARRAY_SIZE(ARRAY_CONSTRUCT())")
     result = cur.fetchone()[0]
     assert result == 0
@@ -51,7 +50,7 @@ def test_array_contains(conn):
     cur.execute("SELECT ARRAY_CONTAINS(3, ARRAY_CONSTRUCT(1, 2, 3, 4))")
     result = cur.fetchone()[0]
     assert result is True
-    
+
     cur.execute("SELECT ARRAY_CONTAINS(5, ARRAY_CONSTRUCT(1, 2, 3, 4))")
     result = cur.fetchone()[0]
     assert result is False
@@ -85,7 +84,7 @@ def test_array_agg(conn):
             ('fruit', 'banana'),
             ('veg', 'carrot');
     """)
-    
+
     cur.execute("""
         SELECT category, ARRAY_AGG(item) as items
         FROM items
@@ -93,11 +92,11 @@ def test_array_agg(conn):
         ORDER BY category
     """)
     results = cur.fetchall()
-    
+
     assert len(results) == 2
     fruit_items = results[0][1]
-    assert 'apple' in fruit_items
-    assert 'banana' in fruit_items
+    assert "apple" in fruit_items
+    assert "banana" in fruit_items
 
 
 def test_array_null_handling(conn):
@@ -106,7 +105,7 @@ def test_array_null_handling(conn):
     cur.execute("SELECT ARRAY_CONSTRUCT(1, NULL, 3)")
     result = cur.fetchone()[0]
     assert result == [1, None, 3]
-    
+
     cur.execute("SELECT ARRAY_SIZE(NULL)")
     result = cur.fetchone()[0]
     assert result is None
@@ -126,7 +125,7 @@ def test_get_array_element(conn):
     cur = conn.cursor()
     cur.execute("SELECT GET(ARRAY_CONSTRUCT('a', 'b', 'c'), 1)")
     result = cur.fetchone()[0]
-    assert result == 'b'  # 0-based indexing
+    assert result == "b"  # 0-based indexing
 
 
 def test_array_compact(conn):
@@ -183,7 +182,7 @@ def test_array_in_where_clause(conn):
             (2, [2, 3, 4]),
             (3, [5, 6, 7]);
     """)
-    
+
     cur.execute("""
         SELECT id
         FROM products
