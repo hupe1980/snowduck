@@ -1,0 +1,10 @@
+[snowduck]
+account = "SD4711"
+user = "username"
+host = "localhost"
+port = "8000"
+protocol = "http"
+authenticator = "password"
+password = "password"
+warehouse = "DEFAULT_WAREHOUSE"
+role = "SYSADMIN"

@@ -1,0 +1,86 @@
+[project]
+name = "snowduck"
+version = "0.0.2"
+description = "Run Snowflake SQL locally, powered by DuckDB - lightweight in-memory SQL engine for development and testing"
+authors = [
+    {name = "hupe1980"}
+]
+repository = "https://github.com/hupe1980/snowduck"
+homepage = "https://github.com/hupe1980/snowduck"
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11,<4"
+keywords = ["snowflake", "duckdb", "sql", "testing", "mock", "database", "data-engineering"]
+dependencies = [
+    "duckdb (>=1.2.1,<2.0.0)",
+    "snowflake-connector-python (>=3.14.0,<4.0.0)",
+    "sqlglot[rs] (>=26.12.0,<27.0.0)",
+    "pyarrow (<19.0.0)",
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Database",
+]
+
+[project.scripts]
+snowduck = "snowduck.server.server:main"
+
+[project.optional-dependencies]
+server = [
+    "starlette>=0.46.1",
+    "uvicorn>=0.34.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "ruff>=0.11.2",
+    "mypy>=1.15.0",
+    "jupyter>=1.1.1",
+    "pyarrow-stubs>=17.19",
+    "numpy>=2.2.4",
+    "pandas>=2.2.3",
+    "pytest-asyncio>=0.26.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+# Specify the target Python version
+target-version = "py311"
+
+# Enable autofix for certain rules
+fix = true
+
+# Exclude specific directories or files
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+]
+
+[tool.ruff.lint]
+# Enable specific linting rules
+select = [
+    "E",  # Pycodestyle errors
+    "F",  # Pyflakes errors
+    "I",  # Import-related errors
+    "B",  # Bugbear rules
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",  # Ignore line length errors
+]
+
+# Add per-file-ignores if needed
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "S101"]  # Ignore docstring and security checks in test files
