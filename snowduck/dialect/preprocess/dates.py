@@ -6,6 +6,7 @@ CAST expressions to ensure compatibility.
 """
 
 import re
+
 from sqlglot import exp
 
 from ..context import DialectContext

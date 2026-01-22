@@ -67,7 +67,7 @@ def register_macros(
     """
     schema_prefix = f"{database}.main." if database else ""
 
-    for name, macro_template in _MACRO_DEFINITIONS:
+    for _name, macro_template in _MACRO_DEFINITIONS:
         try:
             macro_sql = macro_template.format(schema=schema_prefix)
             duck_conn.execute(macro_sql)

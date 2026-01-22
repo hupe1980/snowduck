@@ -1,10 +1,8 @@
 """Tests for additional Snowflake-compatible features - TDD approach."""
 
-import pytest
 import snowflake.connector
 
 from snowduck import mock_snowflake
-
 
 # =============================================================================
 # SPLIT function tests

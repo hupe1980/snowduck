@@ -3,7 +3,7 @@
 import pytest
 import snowflake.connector
 
-from snowduck import start_patch_snowflake, stop_patch_snowflake, seed_table
+from snowduck import start_patch_snowflake, stop_patch_snowflake
 
 
 def test_start_patch_twice_with_reset():
@@ -40,8 +40,8 @@ def test_start_patch_file_persistence_between_restarts():
     Note: Data persists, but the "database" context (which is an ATTACH in DuckDB)
     must be re-created. Tables are stored in the main schema of the file.
     """
-    import tempfile
     import os
+    import tempfile
     
     db_file = tempfile.mktemp(suffix=".duckdb")
     

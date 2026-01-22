@@ -1,7 +1,7 @@
 """Tests for pandas fetch methods."""
 
-import pytest
 import pandas as pd
+import pytest
 import snowflake.connector
 
 from snowduck import mock_snowflake

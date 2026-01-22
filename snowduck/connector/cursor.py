@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import uuid
+from collections.abc import Iterator
 from string import Template
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, Sequence, cast
@@ -18,6 +19,7 @@ from ..info_schema import InfoSchemaManager
 from .rowtype import convert_dbapi_description_to_describe, describe_as_result_metadata
 
 if TYPE_CHECKING:
+    import pandas as pd
     import pyarrow as pa
 
     from .connection import Connection
@@ -567,7 +569,6 @@ class Cursor:
         Returns:
             pandas.DataFrame: All remaining rows as a DataFrame.
         """
-        import pandas as pd
         
         if self._arrow_table is None:
             raise TypeError("No open result set")
@@ -590,8 +591,6 @@ class Cursor:
         Yields:
             pandas.DataFrame: Batches of rows as DataFrames.
         """
-        import pandas as pd
-        from typing import Iterator
         
         if self._arrow_table is None:
             raise TypeError("No open result set")

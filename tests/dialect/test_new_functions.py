@@ -1,9 +1,7 @@
 """Tests for newly added functions."""
 
-import pytest
 import duckdb
 from sqlglot import parse_one
-
 
 # =============================================================================
 # STRING FUNCTIONS
@@ -67,7 +65,7 @@ def test_startswith(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    assert res[0] == True
+    assert res[0] is True
 
 
 def test_endswith(dialect_context):
@@ -82,7 +80,7 @@ def test_endswith(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    assert res[0] == True
+    assert res[0] is True
 
 
 def test_ascii(dialect_context):
@@ -379,7 +377,7 @@ def test_arrays_overlap(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    assert res[0] == True
+    assert res[0] is True
 
 
 def test_array_position_null_return(dialect_context):
@@ -602,7 +600,7 @@ def test_array_intersection(conn):
         assert sorted(arr) == [2, 3]
 
 
-def test_arrays_overlap(conn):
+def test_arrays_overlap_connector(conn):
     """Test ARRAYS_OVERLAP checks if arrays share elements."""
     with conn.cursor() as cursor:
         cursor.execute("""
@@ -612,7 +610,7 @@ def test_arrays_overlap(conn):
             )
         """)
         res = cursor.fetchone()
-        assert res[0] == True
+        assert res[0] is True
 
 
 def test_array_except(conn):
@@ -652,17 +650,17 @@ def test_equal_null(conn):
         # Two NULLs should be equal
         cursor.execute("SELECT EQUAL_NULL(NULL, NULL)")
         res = cursor.fetchone()
-        assert res[0] == True
+        assert res[0] is True
 
         # NULL and value should not be equal
         cursor.execute("SELECT EQUAL_NULL(NULL, 1)")
         res = cursor.fetchone()
-        assert res[0] == False
+        assert res[0] is False
 
         # Same values should be equal
         cursor.execute("SELECT EQUAL_NULL(1, 1)")
         res = cursor.fetchone()
-        assert res[0] == True
+        assert res[0] is True
 
 
 # =============================================================================
