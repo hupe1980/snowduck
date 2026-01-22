@@ -13,7 +13,7 @@ SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavi
 - ✅ **Zero linting errors** - Professional, clean codebase
 - ✅ **Modern CI/CD** - PyPI Trusted Publishers with package attestations
 - ✅ **128 tests passing** in <2s - Fast, comprehensive test suite
-- ✅ **Production-ready** code quality (Grade: A-, 90/100)
+- ✅ **Production-ready** for development & testing
 
 ## Why SnowDuck?
 
