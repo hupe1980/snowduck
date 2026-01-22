@@ -5,13 +5,19 @@ from typing import Any, Callable, Generator, Iterator
 import duckdb
 import pytest
 import snowflake.connector
-import uvicorn
 from snowflake.connector import SnowflakeConnection
 
 from snowduck import patch_snowflake
 from snowduck.dialect import DialectContext
 from snowduck.info_schema import InfoSchemaManager
-from snowduck.server import app
+
+# Conditional imports for server tests (optional dependencies)
+try:
+    import uvicorn
+    from snowduck.server import app
+    HAS_SERVER_DEPS = True
+except ImportError:
+    HAS_SERVER_DEPS = False
 
 
 @pytest.fixture
@@ -47,6 +53,9 @@ def dialect_context(in_memory_duckdb_connection) -> DialectContext:
 @pytest.fixture(scope="session")
 def server(unused_tcp_port_factory: Callable[[], int]) -> Iterator[dict]:
     """Start a test server for the session and provide connection details."""
+    if not HAS_SERVER_DEPS:
+        pytest.skip("Server dependencies (uvicorn, starlette) not installed")
+    
     port = unused_tcp_port_factory()
     config = uvicorn.Config(app, port=port, log_level="error")
     server = uvicorn.Server(config)
