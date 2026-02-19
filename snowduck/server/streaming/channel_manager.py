@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 @dataclass
 class ChannelStatus:
     """Status information for a streaming channel.
-    
+
     Field names match the official Snowpipe Streaming SDK ChannelStatus.
     Reference: https://docs.snowflake.com/en/user-guide/snowpipe-streaming-sdk-python/reference/latest/api/snowflake/ingest/streaming/channel_status/index
     """
@@ -38,10 +38,10 @@ class ChannelStatus:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON response.
-        
+
         Field names match Snowflake's REST API format (from documentation):
         https://docs.snowflake.com/en/user-guide/snowpipe-streaming/snowpipe-streaming-high-performance-rest-api
-        
+
         Response fields:
         - channel_status_code: Status code (e.g., "ACTIVE")
         - last_committed_offset_token: Latest committed offset (REST API name)
@@ -92,7 +92,7 @@ class Channel:
 
 class ChannelManager:
     """Manages streaming channels for Snowpipe Streaming API.
-    
+
     Thread-safe implementation using a lock for channel operations.
     """
 
@@ -107,9 +107,7 @@ class ChannelManager:
         key = self._make_key(database, schema, pipe, channel_name)
         return self._channels.get(key)
 
-    def _generate_continuation_token(
-        self, channel: Channel
-    ) -> str:
+    def _generate_continuation_token(self, channel: Channel) -> str:
         """Generate a continuation token for the channel."""
         # Token encapsulates client and row sequencers
         return f"ct_{channel.key}_{channel.client_sequencer}_{channel.row_sequencer}_{secrets.token_urlsafe(8)}"
@@ -130,7 +128,7 @@ class ChannelManager:
     ) -> Channel:
         """
         Open or reopen a channel.
-        
+
         If the channel already exists, bumps the client sequencer and returns it.
         Otherwise creates a new channel.
         """
@@ -195,12 +193,12 @@ class ChannelManager:
             channel = self._get_channel_unlocked(database, schema, pipe, channel_name)
             if channel is None:
                 return None
-            
+
             # Verify the token matches the expected format and current sequencer
             expected_prefix = f"ct_{channel.key}_{channel.client_sequencer}_"
             if not token.startswith(expected_prefix):
                 return None
-            
+
             return channel
 
     def append_rows(
@@ -233,11 +231,11 @@ class ChannelManager:
         self, database: str, schema: str, pipe: str, channel_names: list[str]
     ) -> tuple[list[dict], dict[str, dict]]:
         """Get status for multiple channels in both SDK formats.
-        
+
         Returns a tuple of:
         1. List for Java SDK format (channels array)
         2. Dict for Python SDK format (channel_statuses)
-        
+
         Note: channel_statuses keys use the ORIGINAL case from channel_names request
         since the SDK looks up by the key it sent.
         """
@@ -249,19 +247,21 @@ class ChannelManager:
                 if channel:
                     # Include full status in channels array with channel identification
                     # Include both field names for SDK compatibility
-                    channels_list.append({
-                        "status_code": 0,
-                        "channel_name": channel.channel_name,
-                        "database_name": channel.database_name,
-                        "schema_name": channel.schema_name,
-                        "pipe_name": channel.pipe_name,
-                        # Both field names for SDK parsing
-                        "persisted_offset_token": channel.status.latest_committed_offset_token,
-                        "latest_committed_offset_token": channel.status.latest_committed_offset_token,
-                        "offset_token": channel.status.latest_committed_offset_token,
-                        "persisted_client_sequencer": channel.client_sequencer,
-                        "persisted_row_sequencer": channel.row_sequencer,
-                    })
+                    channels_list.append(
+                        {
+                            "status_code": 0,
+                            "channel_name": channel.channel_name,
+                            "database_name": channel.database_name,
+                            "schema_name": channel.schema_name,
+                            "pipe_name": channel.pipe_name,
+                            # Both field names for SDK parsing
+                            "persisted_offset_token": channel.status.latest_committed_offset_token,
+                            "latest_committed_offset_token": channel.status.latest_committed_offset_token,
+                            "offset_token": channel.status.latest_committed_offset_token,
+                            "persisted_client_sequencer": channel.client_sequencer,
+                            "persisted_row_sequencer": channel.row_sequencer,
+                        }
+                    )
                     # USE ORIGINAL CASE from channel_names request - SDK looks up by this key!
                     channel_statuses[name] = channel.status.to_dict()
             return channels_list, channel_statuses

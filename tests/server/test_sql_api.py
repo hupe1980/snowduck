@@ -39,20 +39,20 @@ class TestSQLAPI:
             "/api/v2/statements",
             json={"statement": "SELECT 1 as num, 'hello' as msg"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
-        
+
         # Check response structure
         assert "statementHandle" in data
         assert "resultSetMetaData" in data
         assert "data" in data
-        
+
         # Check metadata
         meta = data["resultSetMetaData"]
         assert meta["numRows"] == 1
         assert len(meta["rowType"]) == 2
-        
+
         # Check data
         assert len(data["data"]) == 1
         row = data["data"][0]
@@ -66,7 +66,7 @@ class TestSQLAPI:
             "/api/v2/statements",
             json={"statement": "CREATE SCHEMA IF NOT EXISTS test_schema"},
         )
-        
+
         response = test_client.post(
             "/api/v2/statements",
             json={
@@ -74,7 +74,7 @@ class TestSQLAPI:
                 "schema": "test_schema",
             },
         )
-        
+
         assert response.status_code == 200
 
     def test_submit_statement_empty_statement(self, test_client) -> None:
@@ -83,7 +83,7 @@ class TestSQLAPI:
             "/api/v2/statements",
             json={"statement": ""},
         )
-        
+
         assert response.status_code == 422
         data = response.json()
         assert "message" in data
@@ -94,7 +94,7 @@ class TestSQLAPI:
             "/api/v2/statements",
             json={"statement": "SELECTZ FROM WHERE"},
         )
-        
+
         assert response.status_code == 422
         data = response.json()
         assert "message" in data
@@ -106,7 +106,7 @@ class TestSQLAPI:
             "/api/v2/statements?async=true",
             json={"statement": "SELECT 1"},
         )
-        
+
         assert response.status_code == 202
         data = response.json()
         assert "statementHandle" in data
@@ -120,10 +120,10 @@ class TestSQLAPI:
             json={"statement": "SELECT 42 as answer"},
         )
         handle = submit_response.json()["statementHandle"]
-        
+
         # Get status
         status_response = test_client.get(f"/api/v2/statements/{handle}")
-        
+
         assert status_response.status_code == 200
         data = status_response.json()
         assert data["statementHandle"] == handle
@@ -135,7 +135,7 @@ class TestSQLAPI:
         response = test_client.get(
             "/api/v2/statements/00000000-0000-0000-0000-000000000000"
         )
-        
+
         assert response.status_code == 404
         data = response.json()
         assert "message" in data
@@ -148,12 +148,10 @@ class TestSQLAPI:
             json={"statement": "SELECT 1"},
         )
         handle = submit_response.json()["statementHandle"]
-        
+
         # Cancel it
-        cancel_response = test_client.post(
-            f"/api/v2/statements/{handle}/cancel"
-        )
-        
+        cancel_response = test_client.post(f"/api/v2/statements/{handle}/cancel")
+
         assert cancel_response.status_code == 200
         data = cancel_response.json()
         assert data["statementHandle"] == handle
@@ -163,7 +161,7 @@ class TestSQLAPI:
         response = test_client.post(
             "/api/v2/statements/00000000-0000-0000-0000-000000000000/cancel"
         )
-        
+
         assert response.status_code == 404
 
     def test_multiple_rows(self, test_client) -> None:
@@ -180,7 +178,7 @@ class TestSQLAPI:
                 """
             },
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["resultSetMetaData"]["numRows"] == 3
@@ -194,14 +192,14 @@ class TestSQLAPI:
             json={"statement": "CREATE TABLE IF NOT EXISTS sql_api_test (id INT)"},
         )
         assert response.status_code == 200
-        
+
         # Insert data
         response = test_client.post(
             "/api/v2/statements",
             json={"statement": "INSERT INTO sql_api_test VALUES (1), (2), (3)"},
         )
         assert response.status_code == 200
-        
+
         # Query data
         response = test_client.post(
             "/api/v2/statements",
@@ -210,7 +208,7 @@ class TestSQLAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0] == "3"
-        
+
         # Cleanup
         test_client.post(
             "/api/v2/statements",
@@ -223,7 +221,7 @@ class TestSQLAPI:
             "/api/v2/statements",
             json={"statement": "SELECT NULL as empty_col"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0] is None
@@ -231,12 +229,12 @@ class TestSQLAPI:
     def test_statement_handle_is_uuid(self, test_client) -> None:
         """Test that statement handles are valid UUIDs."""
         import uuid
-        
+
         response = test_client.post(
             "/api/v2/statements",
             json={"statement": "SELECT 1"},
         )
-        
+
         handle = response.json()["statementHandle"]
         # Should not raise
         uuid.UUID(handle)
@@ -253,7 +251,7 @@ class TestSQLAPI:
                 },
             },
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0] == "30"
@@ -270,7 +268,7 @@ class TestSQLAPI:
                 },
             },
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0] == "Hello World"
@@ -286,7 +284,7 @@ class TestSQLAPI:
                 },
             },
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         # Float multiplication result
@@ -303,7 +301,7 @@ class TestSQLAPI:
                 },
             },
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0].lower() == "true"
@@ -314,7 +312,7 @@ class TestSQLAPI:
             "/api/v2/statements?nullable=false",
             json={"statement": "SELECT NULL as val"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0] == "null"
@@ -325,7 +323,7 @@ class TestSQLAPI:
             "/api/v2/statements?nullable=true",
             json={"statement": "SELECT NULL as val"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0] is None
@@ -337,18 +335,18 @@ class TestSQLAPI:
             "/api/v2/statements",
             json={"statement": "CREATE TABLE IF NOT EXISTS stats_test (id INT)"},
         )
-        
+
         # Insert and check stats
         response = test_client.post(
             "/api/v2/statements",
             json={"statement": "INSERT INTO stats_test VALUES (1), (2), (3)"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "stats" in data
         assert data["stats"]["numRowsInserted"] == 3
-        
+
         # Cleanup
         test_client.post(
             "/api/v2/statements",
@@ -360,9 +358,11 @@ class TestSQLAPI:
         # Generate rows using UNNEST
         response = test_client.post(
             "/api/v2/statements",
-            json={"statement": "SELECT * FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)) AS t(id)"},
+            json={
+                "statement": "SELECT * FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)) AS t(id)"
+            },
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["resultSetMetaData"]["numRows"] == 10
@@ -375,10 +375,10 @@ class TestSQLAPI:
             json={"statement": "SELECT 42 as answer"},
         )
         handle = submit_response.json()["statementHandle"]
-        
+
         # Get partition 0
         response = test_client.get(f"/api/v2/statements/{handle}?partition=0")
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["data"][0][0] == "42"
@@ -391,10 +391,10 @@ class TestSQLAPI:
             json={"statement": "SELECT 42 as answer"},
         )
         handle = submit_response.json()["statementHandle"]
-        
+
         # Request partition 999 (invalid)
         response = test_client.get(f"/api/v2/statements/{handle}?partition=999")
-        
+
         # Should return error or handle gracefully
         # For small result sets (1 partition), partition 999 would be invalid
         assert response.status_code in (200, 422)  # Allow either response
@@ -407,10 +407,10 @@ class TestSQLAPI:
             json={"statement": "SELECT 1 as test"},
         )
         handle = submit_response.json()["statementHandle"]
-        
+
         # Retry should fail since status is 'success', not 'failed'
         response = test_client.post(f"/api/v2/statements/{handle}/retry")
-        
+
         assert response.status_code == 422
         data = response.json()
         assert "cannot be retried" in data["message"]
@@ -418,7 +418,7 @@ class TestSQLAPI:
     def test_retry_statement_not_found(self, test_client) -> None:
         """Test retrying a non-existent statement returns 404."""
         response = test_client.post("/api/v2/statements/non-existent-handle/retry")
-        
+
         assert response.status_code == 404
         data = response.json()
         assert "not found" in data["message"]
@@ -426,7 +426,7 @@ class TestSQLAPI:
     def test_query_history_empty(self, test_client) -> None:
         """Test query history endpoint returns queries."""
         response = test_client.get("/api/v2/query-history")
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "queries" in data
@@ -441,10 +441,10 @@ class TestSQLAPI:
                 "/api/v2/statements",
                 json={"statement": f"SELECT {i} as num"},
             )
-        
+
         # Query with limit
         response = test_client.get("/api/v2/query-history?limit=2")
-        
+
         assert response.status_code == 200
         data = response.json()
         assert len(data["queries"]) <= 2
@@ -456,10 +456,10 @@ class TestSQLAPI:
             "/api/v2/statements",
             json={"statement": "SELECT 1 as num"},
         )
-        
+
         # Filter by success
         response = test_client.get("/api/v2/query-history?status=success")
-        
+
         assert response.status_code == 200
         data = response.json()
         # All returned queries should have success status

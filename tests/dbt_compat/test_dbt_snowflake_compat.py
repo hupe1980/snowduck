@@ -73,6 +73,7 @@ except ImportError:
 # Test fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def connector() -> "Iterator[Connector]":
     """Create a fresh in-memory snowduck connector."""
@@ -133,6 +134,7 @@ def live_server():
 # ============================================================================
 # Snowduck Connector Compatibility Tests
 # ============================================================================
+
 
 @pytest.mark.skipif(not HAS_CONNECTOR, reason="snowduck connector not installed")
 class TestDBTConnectorCompatibility:
@@ -251,7 +253,9 @@ class TestDBTQueryExecution:
         cursor = connection.cursor()
         cursor.execute("CREATE TABLE base AS SELECT 1 AS x")
         cursor.execute("CREATE OR REPLACE VIEW test_view AS SELECT x FROM base")
-        cursor.execute("CREATE OR REPLACE VIEW test_view AS SELECT x * 2 AS x FROM base")
+        cursor.execute(
+            "CREATE OR REPLACE VIEW test_view AS SELECT x * 2 AS x FROM base"
+        )
         cursor.execute("SELECT x FROM test_view")
         assert cursor.fetchone()[0] == 2
 
@@ -285,7 +289,7 @@ class TestDBTQueryExecution:
         cursor = connection.cursor()
         cursor.execute("CREATE TABLE target_table (id INT, val VARCHAR)")
         cursor.execute("INSERT INTO target_table VALUES (1, 'old')")
-        
+
         # MERGE pattern used by dbt
         cursor.execute("""
             MERGE INTO target_table AS target
@@ -294,7 +298,7 @@ class TestDBTQueryExecution:
             WHEN MATCHED THEN UPDATE SET val = source.val
             WHEN NOT MATCHED THEN INSERT (id, val) VALUES (source.id, source.val)
         """)
-        
+
         cursor.execute("SELECT * FROM target_table ORDER BY id")
         results = cursor.fetchall()
         assert len(results) == 2
@@ -365,7 +369,7 @@ class TestDBTQueryExecution:
         cursor.execute("CREATE TABLE multi_2 (y INT)")
         cursor.execute("INSERT INTO multi_1 VALUES (1)")
         cursor.execute("INSERT INTO multi_2 VALUES (2)")
-        
+
         cursor.execute("SELECT COUNT(*) FROM multi_1")
         assert cursor.fetchone()[0] == 1
         cursor.execute("SELECT COUNT(*) FROM multi_2")
@@ -443,12 +447,12 @@ class TestDBTServerIntegration:
         """Test that cursor responses match what dbt expects."""
         cursor = connection.cursor()
         cursor.execute("SELECT 42 AS answer")
-        
+
         # dbt's get_response uses these properties
         assert hasattr(cursor, "sqlstate")
         assert hasattr(cursor, "sfqid")
         assert hasattr(cursor, "rowcount")
-        
+
         # The response code should be usable
         code = cursor.sqlstate
         if code is None:
@@ -459,19 +463,19 @@ class TestDBTServerIntegration:
     def test_dbt_split_queries_pattern(self, connection):
         """Test semicolon-separated queries (dbt splits on ;)."""
         cursor = connection.cursor()
-        
+
         # dbt splits these and executes separately
         queries = [
             "CREATE TABLE split_test (x INT);",
             "INSERT INTO split_test VALUES (1);",
             "SELECT * FROM split_test;",
         ]
-        
+
         for query in queries:
             # Remove trailing semicolon as dbt does
             clean_query = query.rstrip(";")
             cursor.execute(clean_query)
-        
+
         results = cursor.fetchall()
         assert results[0][0] == 1
 

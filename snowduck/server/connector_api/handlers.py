@@ -42,11 +42,11 @@ if TYPE_CHECKING:
 
 async def login_request(request: "Request") -> JSONResponse:
     """Handle login requests and create a new session.
-    
+
     POST /session/v1/login-request
-    
+
     Creates a session token for subsequent API calls.
-    
+
     Query Parameters:
         databaseName: Optional database context
         schemaName: Optional schema context
@@ -65,18 +65,20 @@ async def login_request(request: "Request") -> JSONResponse:
     connection = shared_connector.connect(database, schema)
     session_manager.create_session(token, connection)
 
-    return JSONResponse({
-        "data": {
-            "token": token,
-            "parameters": [{"name": "AUTOCOMMIT", "value": True}],
-        },
-        "success": True,
-    })
+    return JSONResponse(
+        {
+            "data": {
+                "token": token,
+                "parameters": [{"name": "AUTOCOMMIT", "value": True}],
+            },
+            "success": True,
+        }
+    )
 
 
 async def session(request: "Request") -> JSONResponse:
     """Handle session management.
-    
+
     GET: Returns session info
     POST: Delete session if ?delete=true
     """
@@ -94,7 +96,7 @@ async def session(request: "Request") -> JSONResponse:
 
 async def get_session_info(request: "Request") -> JSONResponse:
     """Get current session information.
-    
+
     GET /session
     """
     token = request.state.token
@@ -126,33 +128,38 @@ async def get_session_info(request: "Request") -> JSONResponse:
     except Exception:
         pass
 
-    return JSONResponse({
-        "data": {
-            "sessionId": token[:16] + "...",
-            "masterToken": token,
-            "idToken": None,
-            "valid": True,
-            "database": database,
-            "schema": schema,
-            "warehouse": None,
-            "role": None,
-            "parameters": [
-                {"name": "AUTOCOMMIT", "value": True},
-                {"name": "TIMEZONE", "value": "UTC"},
-                {"name": "DATE_OUTPUT_FORMAT", "value": "YYYY-MM-DD"},
-                {"name": "TIME_OUTPUT_FORMAT", "value": "HH24:MI:SS"},
-                {"name": "TIMESTAMP_OUTPUT_FORMAT", "value": "YYYY-MM-DD HH24:MI:SS.FF3"},
-            ],
-        },
-        "success": True,
-        "code": None,
-        "message": None,
-    })
+    return JSONResponse(
+        {
+            "data": {
+                "sessionId": token[:16] + "...",
+                "masterToken": token,
+                "idToken": None,
+                "valid": True,
+                "database": database,
+                "schema": schema,
+                "warehouse": None,
+                "role": None,
+                "parameters": [
+                    {"name": "AUTOCOMMIT", "value": True},
+                    {"name": "TIMEZONE", "value": "UTC"},
+                    {"name": "DATE_OUTPUT_FORMAT", "value": "YYYY-MM-DD"},
+                    {"name": "TIME_OUTPUT_FORMAT", "value": "HH24:MI:SS"},
+                    {
+                        "name": "TIMESTAMP_OUTPUT_FORMAT",
+                        "value": "YYYY-MM-DD HH24:MI:SS.FF3",
+                    },
+                ],
+            },
+            "success": True,
+            "code": None,
+            "message": None,
+        }
+    )
 
 
 async def heartbeat_request(request: "Request") -> JSONResponse:
     """Handle session heartbeat.
-    
+
     POST /session/heartbeat-request
     """
     token = request.state.token
@@ -168,33 +175,37 @@ async def heartbeat_request(request: "Request") -> JSONResponse:
             status_code=401,
         )
 
-    return JSONResponse({
-        "data": {"masterValidatedTokens": {}},
-        "success": True,
-        "code": None,
-        "message": None,
-    })
+    return JSONResponse(
+        {
+            "data": {"masterValidatedTokens": {}},
+            "success": True,
+            "code": None,
+            "message": None,
+        }
+    )
 
 
 async def authenticator_request(request: "Request") -> JSONResponse:
     """Return available authentication methods.
-    
+
     POST /session/authenticator-request
     """
-    return JSONResponse({
-        "data": {
-            "authnMethod": "PASSWORD",
-            "federationInfo": None,
-        },
-        "success": True,
-        "code": None,
-        "message": None,
-    })
+    return JSONResponse(
+        {
+            "data": {
+                "authnMethod": "PASSWORD",
+                "federationInfo": None,
+            },
+            "success": True,
+            "code": None,
+            "message": None,
+        }
+    )
 
 
 async def set_session_parameters(request: "Request") -> JSONResponse:
     """Set session parameters.
-    
+
     POST /session/parameters
     """
     token = request.state.token
@@ -226,8 +237,13 @@ async def set_session_parameters(request: "Request") -> JSONResponse:
         value = param.get("value")
 
         try:
-            if name in ("TIMEZONE", "DATE_OUTPUT_FORMAT", "TIME_OUTPUT_FORMAT",
-                       "TIMESTAMP_OUTPUT_FORMAT", "QUERY_TAG"):
+            if name in (
+                "TIMEZONE",
+                "DATE_OUTPUT_FORMAT",
+                "TIME_OUTPUT_FORMAT",
+                "TIMESTAMP_OUTPUT_FORMAT",
+                "QUERY_TAG",
+            ):
                 applied.append({"name": name, "value": value, "status": "accepted"})
             elif name == "USE_DATABASE":
                 cursor = conn.cursor()
@@ -242,19 +258,23 @@ async def set_session_parameters(request: "Request") -> JSONResponse:
             else:
                 applied.append({"name": name, "value": value, "status": "ignored"})
         except Exception as e:
-            applied.append({"name": name, "value": value, "status": "error", "message": str(e)})
+            applied.append(
+                {"name": name, "value": value, "status": "error", "message": str(e)}
+            )
 
-    return JSONResponse({
-        "data": {"parameters": applied},
-        "success": True,
-        "code": None,
-        "message": "Session parameters updated.",
-    })
+    return JSONResponse(
+        {
+            "data": {"parameters": applied},
+            "success": True,
+            "code": None,
+            "message": "Session parameters updated.",
+        }
+    )
 
 
 async def renew_session(request: "Request") -> JSONResponse:
     """Renew session token.
-    
+
     POST /session/token-request
     """
     token = request.state.token
@@ -270,16 +290,18 @@ async def renew_session(request: "Request") -> JSONResponse:
             status_code=401,
         )
 
-    return JSONResponse({
-        "data": {
-            "sessionToken": token,
-            "validityInSeconds": 3600,
-            "masterValidatedTokens": {},
-        },
-        "success": True,
-        "code": None,
-        "message": "Session renewed successfully.",
-    })
+    return JSONResponse(
+        {
+            "data": {
+                "sessionToken": token,
+                "validityInSeconds": 3600,
+                "masterValidatedTokens": {},
+            },
+            "success": True,
+            "code": None,
+            "message": "Session renewed successfully.",
+        }
+    )
 
 
 # =============================================================================
@@ -289,9 +311,9 @@ async def renew_session(request: "Request") -> JSONResponse:
 
 async def query_request(request: "Request") -> JSONResponse:
     """Execute SQL query.
-    
+
     POST /queries/v1/query-request
-    
+
     Request Body:
         sqlText: SQL statement
         queryResultFormat: "arrow" or "json"
@@ -329,29 +351,33 @@ async def query_request(request: "Request") -> JSONResponse:
             )
         except snowflake.connector.errors.ProgrammingError as e:
             code = f"{e.errno:06d}"
-            return JSONResponse({
-                "data": {"errorCode": code, "sqlState": e.sqlstate},
-                "code": code,
-                "message": e.msg,
-                "success": False,
-            })
+            return JSONResponse(
+                {
+                    "data": {"errorCode": code, "sqlState": e.sqlstate},
+                    "code": code,
+                    "message": e.msg,
+                    "success": False,
+                }
+            )
         except Exception:
             msg = f"Unhandled error during query {sql_text=}"
             raise ServerError(status_code=500, code="261000", message=msg) from None
 
     data = _build_query_response(cur, conn, rowtype, query_result_format)
 
-    return JSONResponse({
-        "data": data,
-        "success": True,
-        "code": None,
-        "message": None,
-    })
+    return JSONResponse(
+        {
+            "data": data,
+            "success": True,
+            "code": None,
+            "message": None,
+        }
+    )
 
 
 async def get_query_result(request: "Request") -> JSONResponse:
     """Get query results by query ID.
-    
+
     GET /queries/v1/query-request/{queryId}
     """
     query_id = request.path_params.get("queryId")
@@ -370,7 +396,7 @@ async def get_query_result(request: "Request") -> JSONResponse:
 
 async def abort_request(request: "Request") -> JSONResponse:
     """Abort running query.
-    
+
     POST /queries/v1/abort-request
     """
     return JSONResponse({"success": True})
@@ -383,7 +409,7 @@ async def abort_request(request: "Request") -> JSONResponse:
 
 async def telemetry_send(request: "Request") -> JSONResponse:
     """Receive telemetry data.
-    
+
     POST /telemetry/send
     """
     try:
@@ -467,12 +493,14 @@ def _build_query_response(cur, conn, rowtype: list, query_result_format: str) ->
                 remaining = rows[chunk_size:]
                 chunks = []
                 for idx in range(0, len(remaining), chunk_size):
-                    chunk_rows = remaining[idx:idx + chunk_size]
-                    chunks.append({
-                        "rowCount": len(chunk_rows),
-                        "rowset": chunk_rows,
-                        "chunkIndex": (idx // chunk_size) + 1,
-                    })
+                    chunk_rows = remaining[idx : idx + chunk_size]
+                    chunks.append(
+                        {
+                            "rowCount": len(chunk_rows),
+                            "rowset": chunk_rows,
+                            "chunkIndex": (idx // chunk_size) + 1,
+                        }
+                    )
 
                 data["rowset"] = first_chunk
                 data["chunks"] = chunks

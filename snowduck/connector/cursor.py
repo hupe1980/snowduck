@@ -508,13 +508,13 @@ class Cursor:
     ) -> tuple[str, Sequence[Any] | dict[Any, Any] | None]:
         if not params:
             return command, params
-        
+
         # Check if using qmark style (?) - DuckDB supports this natively
         # This is what Snowflake SQL REST API uses
         if "?" in command and not isinstance(params, dict):
             # Pass through to DuckDB which natively supports ? placeholders
             return command, params
-        
+
         # For pyformat/format style (%s), we need to do Python string formatting
         # because DuckDB doesn't support %s syntax
         if self._sf_conn.paramstyle in ("pyformat", "format"):

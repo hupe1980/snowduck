@@ -1,6 +1,5 @@
 """Tests for Snowpipe Streaming REST API."""
 
-
 import pytest
 
 from snowduck.server.streaming import ChannelManager, ChannelStatus
@@ -89,15 +88,15 @@ class TestChannelManager:
         manager = ChannelManager()
         channel = manager.open_channel("DB", "SCHEMA", "PIPE", "CHANNEL1")
         old_token = channel.continuation_token
-        
+
         # Reopen channel - this bumps client sequencer
         manager.open_channel("DB", "SCHEMA", "PIPE", "CHANNEL1")
-        
+
         # Old token should now be invalid
         validated = manager.validate_continuation_token(
             "DB", "SCHEMA", "PIPE", "CHANNEL1", old_token
         )
-        
+
         assert validated is None
 
     def test_validate_continuation_token_valid(self) -> None:
@@ -175,7 +174,7 @@ class TestChannelManager:
         # Check Java SDK format (channels list)
         assert len(channels_list) == 2  # NONEXISTENT not included
         assert channels_list[0]["persisted_client_sequencer"] >= 0
-        
+
         # Check Python SDK format (channel_statuses dict)
         assert "CHANNEL1" in channel_statuses
         assert "CHANNEL2" in channel_statuses
@@ -186,29 +185,27 @@ class TestChannelManager:
     def test_thread_safety(self) -> None:
         """Test that ChannelManager is thread-safe."""
         import threading
-        
+
         manager = ChannelManager()
         errors: list[Exception] = []
-        
+
         def worker(channel_id: int) -> None:
             try:
                 for _ in range(100):
-                    manager.open_channel(
-                        "DB", "SCHEMA", "PIPE", f"CHANNEL{channel_id}"
-                    )
+                    manager.open_channel("DB", "SCHEMA", "PIPE", f"CHANNEL{channel_id}")
                     manager.append_rows(
                         "DB", "SCHEMA", "PIPE", f"CHANNEL{channel_id}", row_count=1
                     )
                     manager.get_channel("DB", "SCHEMA", "PIPE", f"CHANNEL{channel_id}")
             except Exception as e:
                 errors.append(e)
-        
+
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        
+
         assert len(errors) == 0, f"Thread safety errors: {errors}"
 
 
@@ -260,15 +257,15 @@ class TestLRUCache:
     def test_lru_cache_eviction(self) -> None:
         """Test that LRU cache evicts oldest entries when full."""
         from snowduck.server.streaming import _LRUCache
-        
+
         cache: _LRUCache = _LRUCache(maxsize=3)
         cache["a"] = "1"
         cache["b"] = "2"
         cache["c"] = "3"
-        
+
         # Adding a 4th item should evict the oldest (a)
         cache["d"] = "4"
-        
+
         assert "a" not in cache
         assert "b" in cache
         assert "c" in cache
@@ -277,18 +274,18 @@ class TestLRUCache:
     def test_lru_cache_access_updates_order(self) -> None:
         """Test that accessing an item moves it to the end (most recent)."""
         from snowduck.server.streaming import _LRUCache
-        
+
         cache: _LRUCache = _LRUCache(maxsize=3)
         cache["a"] = "1"
         cache["b"] = "2"
         cache["c"] = "3"
-        
+
         # Access 'a' to make it most recent
         cache["a"] = "1"
-        
+
         # Adding a 4th item should now evict 'b' (oldest)
         cache["d"] = "4"
-        
+
         assert "a" in cache  # Still there because we accessed it
         assert "b" not in cache  # Evicted
         assert "c" in cache
@@ -320,7 +317,7 @@ class TestStreamingEndpoints:
 
     def test_get_hostname(self, client: "TestClient") -> None:
         """Test hostname endpoint returns plain text (SDK v1.1.2 format).
-        
+
         Returns the host from the request so SDK uses same host for subsequent calls.
         In tests with TestClient, this is 'testserver'.
         """
@@ -379,7 +376,9 @@ class TestStreamingEndpoints:
         assert data["channel_status"]["schema_name"] == "TESTSCHEMA"
         assert data["channel_status"]["pipe_name"] == "TESTPIPE"
         assert data["channel_status"]["channel_name"] == "TESTCHANNEL"
-        assert data["channel_status"]["channel_status_code"] == "ACTIVE"  # Required by Rust SDK
+        assert (
+            data["channel_status"]["channel_status_code"] == "ACTIVE"
+        )  # Required by Rust SDK
 
     def test_open_channel_with_offset_token(self, client: "TestClient") -> None:
         response = client.put(
@@ -390,9 +389,7 @@ class TestStreamingEndpoints:
         assert response.status_code == 200
         data = response.json()
         # REST API uses last_committed_offset_token (per documentation)
-        assert (
-            data["channel_status"]["last_committed_offset_token"] == "my_offset_123"
-        )
+        assert data["channel_status"]["last_committed_offset_token"] == "my_offset_123"
 
     def test_drop_channel(self, client: "TestClient") -> None:
         # First create the channel
@@ -440,9 +437,7 @@ class TestStreamingEndpoints:
         assert "CH2" in data["channel_statuses"]
         assert "NONEXISTENT" not in data["channel_statuses"]
 
-    def test_append_rows_without_continuation_token(
-        self, client: "TestClient"
-    ) -> None:
+    def test_append_rows_without_continuation_token(self, client: "TestClient") -> None:
         # Create channel first
         client.put(
             "/v2/streaming/databases/testdb/schemas/testschema/pipes/appendpipe/channels/appendchannel"

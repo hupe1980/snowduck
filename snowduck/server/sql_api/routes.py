@@ -12,7 +12,7 @@ from . import handlers
 
 def get_sql_api_routes() -> list[Route]:
     """Get all SQL API routes.
-    
+
     Returns:
         List of Starlette Route objects for the SQL REST API
     """

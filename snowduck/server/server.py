@@ -45,7 +45,7 @@ from .streaming import streaming_routes
 
 async def fallback_route(request: Request) -> JSONResponse:
     """Fallback route to log unmatched requests.
-    
+
     This helps with debugging when connectors hit unexpected endpoints.
     """
     print(f"[FALLBACK] Unmatched request: {request.method} {request.url}")
@@ -59,10 +59,10 @@ async def fallback_route(request: Request) -> JSONResponse:
 
 def create_app(debug: bool = False) -> Starlette:
     """Create and configure the SnowDuck Starlette application.
-    
+
     Args:
         debug: Enable debug mode for detailed error messages
-    
+
     Returns:
         Configured Starlette application
     """
@@ -79,11 +79,11 @@ def create_app(debug: bool = False) -> Starlette:
     ]
 
     app = Starlette(debug=debug, routes=routes)
-    
+
     # Add middleware (order matters - last added runs first)
     app.add_middleware(ErrorHandlingMiddleware)
     app.add_middleware(TokenValidationMiddleware)
-    
+
     return app
 
 
@@ -140,7 +140,7 @@ def main() -> None:
     print("  - Internal Connector API: /session/v1/*, /queries/v1/*")
     print("  - SQL REST API: /api/v2/statements*")
     print("  - Snowpipe Streaming: /v2/streaming/*")
-    
+
     run(application, host=args.host, port=args.port)
 
 

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):
     """Middleware to handle ServerError exceptions globally.
-    
+
     Catches ServerError exceptions and converts them to JSON responses
     with the appropriate HTTP status code and Snowflake error format.
     """
@@ -46,11 +46,11 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
 
 class TokenValidationMiddleware(BaseHTTPMiddleware):
     """Middleware to validate Authorization header and extract token.
-    
+
     This middleware validates session tokens for the internal connector API.
     It extracts the token from the Authorization header and verifies it
     exists in the session manager.
-    
+
     Routes that skip validation:
     - Login request (no token yet)
     - Streaming hostname endpoint (public)
@@ -61,12 +61,14 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
     """
 
     # Exact paths that skip token validation
-    SKIP_PATHS = frozenset([
-        "/session/v1/login-request",
-        "/v2/streaming/hostname",
-        "/oauth/token",
-    ])
-    
+    SKIP_PATHS = frozenset(
+        [
+            "/session/v1/login-request",
+            "/v2/streaming/hostname",
+            "/oauth/token",
+        ]
+    )
+
     # Path prefixes that skip token validation
     SKIP_PREFIXES = (
         "/telemetry/",
@@ -78,7 +80,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         path = request.url.path
-        
+
         # Skip validation for specific routes
         if path in self.SKIP_PATHS or any(
             path.startswith(prefix) for prefix in self.SKIP_PREFIXES

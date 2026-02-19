@@ -28,14 +28,14 @@ if TYPE_CHECKING:
 
 async def submit_statement(request: "Request") -> "JSONResponse":
     """Submit a SQL statement for execution.
-    
+
     POST /api/v2/statements
-    
+
     Supports:
         - Bind parameters via "bindings" field
         - Async execution via ?async=true query parameter
         - Multi-statement execution via "parameters.multi_statement_count"
-    
+
     Request Body:
         statement: SQL text
         database: Database context
@@ -44,7 +44,7 @@ async def submit_statement(request: "Request") -> "JSONResponse":
         role: Role context (informational)
         bindings: Positional bind parameters
         parameters: Additional execution parameters
-    
+
     Query Parameters:
         async: If "true", return immediately with handle
         nullable: If "false", format nulls as "null" string
@@ -153,9 +153,9 @@ async def submit_statement(request: "Request") -> "JSONResponse":
 
 async def get_statement_status(request: "Request") -> "JSONResponse":
     """Get statement status and results.
-    
+
     GET /api/v2/statements/{statementHandle}
-    
+
     Query Parameters:
         partition: Partition number to return (0-indexed)
         nullable: If "false", format nulls as "null" string
@@ -251,7 +251,7 @@ async def get_statement_status(request: "Request") -> "JSONResponse":
 
 async def cancel_statement(request: "Request") -> "JSONResponse":
     """Cancel a running statement.
-    
+
     POST /api/v2/statements/{statementHandle}/cancel
     """
     from starlette.responses import JSONResponse
@@ -270,13 +270,15 @@ async def cancel_statement(request: "Request") -> "JSONResponse":
         )
 
     if statement_manager.cancel_statement(handle):
-        return JSONResponse({
-            "code": "000000",
-            "sqlState": "00000",
-            "message": "Statement cancelled successfully.",
-            "statementHandle": handle,
-            "statementStatusUrl": f"/api/v2/statements/{handle}",
-        })
+        return JSONResponse(
+            {
+                "code": "000000",
+                "sqlState": "00000",
+                "message": "Statement cancelled successfully.",
+                "statementHandle": handle,
+                "statementStatusUrl": f"/api/v2/statements/{handle}",
+            }
+        )
     else:
         return JSONResponse(
             {
@@ -290,7 +292,7 @@ async def cancel_statement(request: "Request") -> "JSONResponse":
 
 async def retry_statement(request: "Request") -> "JSONResponse":
     """Retry a failed statement.
-    
+
     POST /api/v2/statements/{statementHandle}/retry
     """
     from starlette.responses import JSONResponse
@@ -344,26 +346,32 @@ async def retry_statement(request: "Request") -> "JSONResponse":
             "numRows": len(results),
             "format": "jsonv2",
             "rowType": build_row_type(description),
-            "partitionInfo": [{
-                "rowCount": len(results),
-                "compressedSize": 0,
-                "uncompressedSize": 0,
-            }] if results else [],
+            "partitionInfo": [
+                {
+                    "rowCount": len(results),
+                    "compressedSize": 0,
+                    "uncompressedSize": 0,
+                }
+            ]
+            if results
+            else [],
         }
 
         cursor.close()
         statement_manager.update_statement(stmt)
 
-        return JSONResponse({
-            "code": "090001",
-            "sqlState": "00000",
-            "message": "Statement retried successfully.",
-            "statementHandle": stmt.handle,
-            "createdOn": stmt.created_on,
-            "statementStatusUrl": f"/api/v2/statements/{stmt.handle}",
-            "resultSetMetaData": stmt.result_meta,
-            "data": [format_row(row) for row in stmt.result_data],
-        })
+        return JSONResponse(
+            {
+                "code": "090001",
+                "sqlState": "00000",
+                "message": "Statement retried successfully.",
+                "statementHandle": stmt.handle,
+                "createdOn": stmt.created_on,
+                "statementStatusUrl": f"/api/v2/statements/{stmt.handle}",
+                "resultSetMetaData": stmt.result_meta,
+                "data": [format_row(row) for row in stmt.result_data],
+            }
+        )
 
     except snowflake.connector.errors.ProgrammingError as e:
         stmt.status = "failed"
@@ -385,9 +393,9 @@ async def retry_statement(request: "Request") -> "JSONResponse":
 
 async def get_query_history(request: "Request") -> "JSONResponse":
     """Get history of recent queries.
-    
+
     GET /api/v2/query-history
-    
+
     Query Parameters:
         limit: Maximum number of results (default: 100)
         status: Filter by status (pending, running, success, failed, cancelled)
@@ -424,13 +432,15 @@ async def get_query_history(request: "Request") -> "JSONResponse":
 
         queries.append(query_info)
 
-    return JSONResponse({
-        "code": "000000",
-        "sqlState": "00000",
-        "message": "Query history retrieved successfully.",
-        "queries": queries,
-        "total": len(queries),
-    })
+    return JSONResponse(
+        {
+            "code": "000000",
+            "sqlState": "00000",
+            "message": "Query history retrieved successfully.",
+            "queries": queries,
+            "total": len(queries),
+        }
+    )
 
 
 # =============================================================================
@@ -440,7 +450,7 @@ async def get_query_history(request: "Request") -> "JSONResponse":
 
 def _convert_bindings(bindings: dict) -> tuple | None:
     """Convert binding parameters to tuple for SQL execution.
-    
+
     Format: {"1":{"type":"FIXED","value":"123"}, "2":{"type":"TEXT","value":"hello"}}
     """
     bind_values = []
@@ -468,7 +478,7 @@ def _build_result_metadata(description: list, rows: list, stmt: Any) -> dict:
     """Build result set metadata."""
     row_type = build_row_type(description) if description else []
     partition_count = stmt.get_partition_count()
-    
+
     return {
         "numRows": len(rows),
         "format": "jsonv2",
@@ -476,7 +486,9 @@ def _build_result_metadata(description: list, rows: list, stmt: Any) -> dict:
         "partitionInfo": [
             {"rowCount": min(stmt.partition_size, len(rows) - i * stmt.partition_size)}
             for i in range(partition_count)
-        ] if partition_count > 1 else None,
+        ]
+        if partition_count > 1
+        else None,
     }
 
 
@@ -484,7 +496,7 @@ def _collect_dml_stats(sql: str, cursor: Any) -> dict | None:
     """Collect DML operation statistics."""
     if not hasattr(cursor, "rowcount") or cursor.rowcount < 0:
         return None
-    
+
     sql_upper = sql.strip().upper()
     if sql_upper.startswith("INSERT"):
         return {"numRowsInserted": cursor.rowcount}
@@ -494,7 +506,7 @@ def _collect_dml_stats(sql: str, cursor: Any) -> dict | None:
         return {"numRowsDeleted": cursor.rowcount}
     elif sql_upper.startswith("MERGE"):
         return {"numRowsUpdated": cursor.rowcount}
-    
+
     return None
 
 
@@ -503,14 +515,14 @@ def _build_link_headers(stmt: Any) -> dict:
     partition_count = stmt.get_partition_count()
     if partition_count <= 1:
         return {}
-    
+
     links = [
         f'</api/v2/statements/{stmt.handle}?partition=0>; rel="first"',
         f'</api/v2/statements/{stmt.handle}?partition={partition_count - 1}>; rel="last"',
     ]
     if partition_count > 1:
         links.append(f'</api/v2/statements/{stmt.handle}?partition=1>; rel="next"')
-    
+
     return {"Link": ", ".join(links)}
 
 
@@ -519,23 +531,27 @@ def _build_partition_headers(stmt: Any, partition: int) -> dict:
     partition_count = stmt.get_partition_count()
     if partition_count <= 1:
         return {}
-    
+
     links = [
         f'</api/v2/statements/{stmt.handle}?partition=0>; rel="first"',
         f'</api/v2/statements/{stmt.handle}?partition={partition_count - 1}>; rel="last"',
     ]
     if partition > 0:
-        links.append(f'</api/v2/statements/{stmt.handle}?partition={partition - 1}>; rel="prev"')
+        links.append(
+            f'</api/v2/statements/{stmt.handle}?partition={partition - 1}>; rel="prev"'
+        )
     if partition < partition_count - 1:
-        links.append(f'</api/v2/statements/{stmt.handle}?partition={partition + 1}>; rel="next"')
-    
+        links.append(
+            f'</api/v2/statements/{stmt.handle}?partition={partition + 1}>; rel="next"'
+        )
+
     return {"Link": ", ".join(links)}
 
 
 def _handle_programming_error(stmt: Any, e: Any) -> "JSONResponse":
     """Handle ProgrammingError during execution."""
     from starlette.responses import JSONResponse
-    
+
     stmt.status = "failed"
     stmt.error_code = f"{e.errno:06d}" if e.errno else "000001"
     stmt.error_message = str(e.msg)
@@ -557,7 +573,7 @@ def _handle_programming_error(stmt: Any, e: Any) -> "JSONResponse":
 def _handle_generic_error(stmt: Any, e: Exception) -> "JSONResponse":
     """Handle generic exception during execution."""
     from starlette.responses import JSONResponse
-    
+
     stmt.status = "failed"
     stmt.error_code = "000001"
     stmt.error_message = str(e)

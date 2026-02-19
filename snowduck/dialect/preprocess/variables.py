@@ -48,7 +48,7 @@ def preprocess_variables(
         # These are bind parameter placeholders for parameterized queries
         if expression.name == "?" or expression.this is None:
             return expression
-        
+
         var_name = expression.name.upper()
         if var_name in context.session_variables:
             value = context.session_variables[var_name]

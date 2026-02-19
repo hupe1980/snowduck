@@ -22,7 +22,7 @@ _CHANNEL = "channels/{channelName}"
 
 def get_streaming_routes() -> list[Route]:
     """Get all streaming API routes.
-    
+
     Returns:
         List of Starlette Route objects for the streaming API.
     """
@@ -30,16 +30,12 @@ def get_streaming_routes() -> list[Route]:
         # Auth & Discovery
         Route(f"{_MGMT_BASE}/hostname", handlers.get_hostname, methods=["GET"]),
         Route("/oauth/token", handlers.exchange_scoped_token, methods=["POST"]),
-        
         # Telemetry
         Route("/telemetry/send/sessionless", handlers.send_telemetry, methods=["POST"]),
-        
         # Pipe Info - Multiple path patterns for SDK compatibility
         *_pipe_info_routes(),
-        
         # Channel Management - Multiple path patterns for SDK compatibility
         *_channel_routes(),
-        
         # Data Operations
         *_data_routes(),
     ]
@@ -51,67 +47,69 @@ def _pipe_info_routes() -> list[Route]:
         f"{_MGMT_BASE}/{_ORG_ACCOUNT}/{_DB_SCHEMA}",
         f"{_MGMT_BASE}/{_DB_SCHEMA}",
     ]
-    
+
     routes = []
     for base in patterns:
-        routes.extend([
-            Route(
-                f"{base}/{_PIPE}:pipe-info",
-                handlers.get_pipe_info,
-                methods=["GET", "POST"],
-            ),
-            Route(
-                f"{base}/{_PIPE}:validate-credentials",
-                handlers.validate_credentials,
-                methods=["POST"],
-            ),
-            Route(
-                f"{base}/{_PIPE}:bulk-channel-status",
-                handlers.bulk_channel_status,
-                methods=["POST"],
-            ),
-            Route(
-                f"{base}/{_PIPE}/{_CHANNEL}",
-                handlers.open_channel,
-                methods=["PUT"],
-            ),
-            Route(
-                f"{base}/{_PIPE}/{_CHANNEL}",
-                handlers.drop_channel,
-                methods=["DELETE"],
-            ),
-            Route(
-                f"{base}/{_PIPE}/{_CHANNEL}/status",
-                handlers.get_channel_status,
-                methods=["GET"],
-            ),
-            Route(
-                f"{base}/{_PIPE}/{_CHANNEL}:flush",
-                handlers.flush_channel,
-                methods=["POST"],
-            ),
-            Route(
-                f"{base}/{_PIPE}/{_CHANNEL}/offset",
-                handlers.get_latest_committed_offset,
-                methods=["GET"],
-            ),
-            Route(
-                f"{base}/{_PIPE}/channels",
-                handlers.list_channels,
-                methods=["GET"],
-            ),
-            Route(
-                f"{base}/{_TABLE}:table-info",
-                handlers.get_table_info,
-                methods=["GET"],
-            ),
-            Route(
-                f"{base}/{_PIPE}/{_CHANNEL}:register-blobs",
-                handlers.register_blob,
-                methods=["POST"],
-            ),
-        ])
-    
+        routes.extend(
+            [
+                Route(
+                    f"{base}/{_PIPE}:pipe-info",
+                    handlers.get_pipe_info,
+                    methods=["GET", "POST"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}:validate-credentials",
+                    handlers.validate_credentials,
+                    methods=["POST"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}:bulk-channel-status",
+                    handlers.bulk_channel_status,
+                    methods=["POST"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}/{_CHANNEL}",
+                    handlers.open_channel,
+                    methods=["PUT"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}/{_CHANNEL}",
+                    handlers.drop_channel,
+                    methods=["DELETE"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}/{_CHANNEL}/status",
+                    handlers.get_channel_status,
+                    methods=["GET"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}/{_CHANNEL}:flush",
+                    handlers.flush_channel,
+                    methods=["POST"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}/{_CHANNEL}/offset",
+                    handlers.get_latest_committed_offset,
+                    methods=["GET"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}/channels",
+                    handlers.list_channels,
+                    methods=["GET"],
+                ),
+                Route(
+                    f"{base}/{_TABLE}:table-info",
+                    handlers.get_table_info,
+                    methods=["GET"],
+                ),
+                Route(
+                    f"{base}/{_PIPE}/{_CHANNEL}:register-blobs",
+                    handlers.register_blob,
+                    methods=["POST"],
+                ),
+            ]
+        )
+
     return routes
 
 
@@ -127,7 +125,7 @@ def _data_routes() -> list[Route]:
         f"{_DATA_BASE}/{_ORG_ACCOUNT}/{_DB_SCHEMA}",
         f"{_DATA_BASE}/{_DB_SCHEMA}",
     ]
-    
+
     routes = []
     for base in patterns:
         routes.append(
@@ -137,7 +135,7 @@ def _data_routes() -> list[Route]:
                 methods=["POST"],
             )
         )
-    
+
     return routes
 
 

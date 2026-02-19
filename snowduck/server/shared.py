@@ -25,7 +25,7 @@ session_manager = SessionManager()
 @dataclass
 class ServerError(Exception):
     """Exception raised for server errors with HTTP status code and Snowflake error code."""
-    
+
     status_code: int
     code: str
     message: str

@@ -51,10 +51,10 @@ TYPE_MAP = {
 
 def type_code_to_name(type_code: int | str | type) -> str:
     """Convert type to Snowflake type name.
-    
+
     Args:
         type_code: Type code (int), type name (str), or type class
-        
+
     Returns:
         Snowflake type name string
     """
@@ -63,41 +63,45 @@ def type_code_to_name(type_code: int | str | type) -> str:
         type_str = type_code.__name__.upper()
     else:
         type_str = str(type_code).upper()
-    
+
     # Check for exact match or partial match
     for key, value in TYPE_MAP.items():
         if key in type_str:
             return value
-    
+
     return "TEXT"
 
 
 def build_row_type(description: list) -> list[dict[str, Any]]:
     """Build row type metadata from cursor description.
-    
+
     Converts DuckDB/snowduck cursor description to Snowflake-compatible
     column metadata format.
-    
+
     Args:
         description: Cursor description list (ResultMetadata or tuples)
-        
+
     Returns:
         List of column metadata dictionaries
     """
     from snowflake.connector.cursor import ResultMetadata
-    
+
     row_types = []
     for col in description:
         # Handle ResultMetadata objects (snowduck cursor)
         if isinstance(col, ResultMetadata):
-            row_types.append({
-                "name": col.name,
-                "type": type_code_to_name(col.type_code),
-                "length": col.internal_size or 0,
-                "precision": col.precision or 0,
-                "scale": col.scale or 0,
-                "nullable": col.is_nullable if col.is_nullable is not None else True,
-            })
+            row_types.append(
+                {
+                    "name": col.name,
+                    "type": type_code_to_name(col.type_code),
+                    "length": col.internal_size or 0,
+                    "precision": col.precision or 0,
+                    "scale": col.scale or 0,
+                    "nullable": col.is_nullable
+                    if col.is_nullable is not None
+                    else True,
+                }
+            )
         # Handle tuple format (regular DBAPI cursor)
         elif isinstance(col, (tuple, list)):
             if len(col) >= 2:
@@ -108,36 +112,40 @@ def build_row_type(description: list) -> list[dict[str, Any]]:
                 name = str(col[0]) if col else "column"
                 type_info = "TEXT"
                 null_ok = True
-            
-            row_types.append({
-                "name": str(name),
-                "type": type_code_to_name(type_info),
-                "length": 0,
-                "precision": 0,
-                "scale": 0,
-                "nullable": null_ok if null_ok is not None else True,
-            })
+
+            row_types.append(
+                {
+                    "name": str(name),
+                    "type": type_code_to_name(type_info),
+                    "length": 0,
+                    "precision": 0,
+                    "scale": 0,
+                    "nullable": null_ok if null_ok is not None else True,
+                }
+            )
         else:
             # Fallback for unknown formats
-            row_types.append({
-                "name": str(col),
-                "type": "TEXT",
-                "length": 0,
-                "precision": 0,
-                "scale": 0,
-                "nullable": True,
-            })
-    
+            row_types.append(
+                {
+                    "name": str(col),
+                    "type": "TEXT",
+                    "length": 0,
+                    "precision": 0,
+                    "scale": 0,
+                    "nullable": True,
+                }
+            )
+
     return row_types
 
 
 def format_value(value: Any, nullable: bool = True) -> Any:
     """Format a value for JSON response.
-    
+
     Args:
         value: The value to format
         nullable: If False, return "null" string instead of None
-        
+
     Returns:
         Formatted value suitable for JSON
     """
@@ -148,11 +156,11 @@ def format_value(value: Any, nullable: bool = True) -> Any:
 
 def format_row(row: list[Any], nullable: bool = True) -> list[Any]:
     """Format a row's values for JSON response.
-    
+
     Args:
         row: List of values
         nullable: If False, return "null" string instead of None
-        
+
     Returns:
         Formatted row values
     """
