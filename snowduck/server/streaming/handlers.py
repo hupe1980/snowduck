@@ -525,7 +525,7 @@ async def _decompress_body(request: Request) -> bytes:
             with dctx.stream_reader(io.BytesIO(body)) as reader:
                 return reader.read()
         except ImportError:
-            raise ValueError("zstd decompression not available")
+            raise ValueError("zstd decompression not available") from None
     
     return body
 

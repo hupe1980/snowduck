@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # Mapping from DuckDB/Python types to Snowflake types
 TYPE_MAP = {
     "INTEGER": "FIXED",

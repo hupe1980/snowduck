@@ -1,6 +1,5 @@
 """Tests for Snowpipe Streaming REST API."""
 
-import json
 
 import pytest
 
@@ -194,7 +193,7 @@ class TestChannelManager:
         def worker(channel_id: int) -> None:
             try:
                 for _ in range(100):
-                    channel = manager.open_channel(
+                    manager.open_channel(
                         "DB", "SCHEMA", "PIPE", f"CHANNEL{channel_id}"
                     )
                     manager.append_rows(

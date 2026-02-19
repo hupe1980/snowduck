@@ -21,7 +21,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -478,7 +478,7 @@ class TestDBTServerIntegration:
     @pytest.mark.skipif(not HAS_CONNECTOR, reason="snowduck connector not installed")
     def test_dbt_empty_query_handling(self, connection):
         """dbt should handle empty queries gracefully."""
-        cursor = connection.cursor()
+        _cursor = connection.cursor()  # noqa: F841
         # Some dbt operations may result in empty statements
         # that get filtered out before execution
 

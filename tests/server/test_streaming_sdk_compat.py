@@ -47,10 +47,10 @@ if TYPE_CHECKING:
 
 # Check for server dependencies
 try:
+    from snowduck.server.channel_manager import ChannelManager
     from starlette.testclient import TestClient as _TestClient
 
     from snowduck.server import app as _app
-    from snowduck.server.channel_manager import ChannelManager
 
     HAS_SERVER_DEPS = True
 except ImportError:
@@ -63,7 +63,11 @@ except ImportError:
 try:
     from snowflake.ingest.streaming import (
         ChannelStatus as SDKChannelStatus,
+    )
+    from snowflake.ingest.streaming import (
         StreamingIngestChannel as SDKChannel,
+    )
+    from snowflake.ingest.streaming import (
         StreamingIngestClient as SDKClient,
     )
 
