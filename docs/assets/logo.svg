@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40" width="100" height="40">
+  <!-- Snowflake icon -->
+  <g transform="translate(5, 5)">
+    <!-- Center -->
+    <circle cx="15" cy="15" r="3" fill="#29B5E8"/>
+    <!-- Spokes -->
+    <line x1="15" y1="5" x2="15" y2="25" stroke="#29B5E8" stroke-width="2"/>
+    <line x1="5" y1="15" x2="25" y2="15" stroke="#29B5E8" stroke-width="2"/>
+    <line x1="8" y1="8" x2="22" y2="22" stroke="#29B5E8" stroke-width="2"/>
+    <line x1="22" y1="8" x2="8" y2="22" stroke="#29B5E8" stroke-width="2"/>
+    <!-- Branch ends -->
+    <circle cx="15" cy="5" r="2" fill="#29B5E8"/>
+    <circle cx="15" cy="25" r="2" fill="#29B5E8"/>
+    <circle cx="5" cy="15" r="2" fill="#29B5E8"/>
+    <circle cx="25" cy="15" r="2" fill="#29B5E8"/>
+  </g>
+  <!-- Duck icon (simplified) -->
+  <g transform="translate(35, 8)">
+    <!-- Body -->
+    <ellipse cx="12" cy="18" rx="10" ry="8" fill="#FFC107"/>
+    <!-- Head -->
+    <circle cx="20" cy="10" r="6" fill="#FFC107"/>
+    <!-- Beak -->
+    <path d="M26 10 L32 12 L26 14 Z" fill="#FF9800"/>
+    <!-- Eye -->
+    <circle cx="22" cy="9" r="1.5" fill="#333"/>
+  </g>
+  <!-- Text -->
+  <text x="65" y="27" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" fill="#333">SnowDuck</text>
+</svg>

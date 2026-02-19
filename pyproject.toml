@@ -1,6 +1,6 @@
 [project]
 name = "snowduck"
-version = "0.0.4"
+version = "0.0.5"
 description = "Run Snowflake SQL locally, powered by DuckDB - lightweight in-memory SQL engine for development and testing"
 authors = [
     {name = "hupe1980"}
@@ -33,6 +33,7 @@ snowduck = "snowduck.server.server:main"
 server = [
     "starlette>=0.46.1",
     "uvicorn>=0.34.0",
+    "zstandard>=0.23.0",  # Required for SDK InsertRows mode (zstd compression)
 ]
 
 [dependency-groups]
@@ -48,6 +49,9 @@ dev = [
     "pytest-asyncio>=0.26.0",
     "starlette>=0.46.1",
     "uvicorn>=0.34.0",
+    "zstandard>=0.23.0",  # Required for SDK InsertRows mode (zstd compression)
+    "snowpipe-streaming>=1.1.0",
+    "dbt-snowflake>=1.9.0",  # For dbt compatibility tests
 ]
 
 [build-system]
@@ -87,3 +91,9 @@ ignore = [
 # Add per-file-ignores if needed
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D", "S101"]  # Ignore docstring and security checks in test files
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+markers = [
+    "integration: marks tests as integration tests that require manual run (deselect with '-m \"not integration\"')",
+]

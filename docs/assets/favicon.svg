@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Background -->
+  <rect width="32" height="32" rx="4" fill="#29B5E8"/>
+  <!-- Snowflake -->
+  <g transform="translate(4, 4)">
+    <circle cx="12" cy="12" r="2" fill="white"/>
+    <line x1="12" y1="4" x2="12" y2="20" stroke="white" stroke-width="2"/>
+    <line x1="4" y1="12" x2="20" y2="12" stroke="white" stroke-width="2"/>
+    <line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="1.5"/>
+    <line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="1.5"/>
+  </g>
+  <!-- Duck accent -->
+  <circle cx="24" cy="24" r="5" fill="#FFC107"/>
+  <circle cx="25" cy="23" r="1" fill="#333"/>
+</svg>

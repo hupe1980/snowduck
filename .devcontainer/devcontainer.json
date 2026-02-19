@@ -6,7 +6,6 @@
 	"image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
 	"features": {
 		"ghcr.io/devcontainers/features/common-utils:2": {},
-		"ghcr.io/astral-sh/features/uv:0": {},
 		"ghcr.io/meaningful-ooo/devcontainer-features/just:1": {}
 	},
 
@@ -14,7 +13,7 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "uv sync",
+	"postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && . $HOME/.local/bin/env && uv sync",
 	"postStartCommand": "sudo sh -c 'echo 127.0.0.1 snowduck.snowflakecomputing.com >> /etc/hosts'",
 	"containerEnv": {
 		"UV_LINK_MODE": "copy"

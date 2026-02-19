@@ -42,7 +42,13 @@ def preprocess_variables(
                 raise ValueError(f"Undefined session variable: ${var_name}")
 
     # Also check Placeholder (in case syntax varies)
+    # But skip anonymous ? placeholders - those are bind parameters, not session variables
     if isinstance(expression, exp.Placeholder):
+        # Anonymous ? placeholders have name='?' and this=None
+        # These are bind parameter placeholders for parameterized queries
+        if expression.name == "?" or expression.this is None:
+            return expression
+        
         var_name = expression.name.upper()
         if var_name in context.session_variables:
             value = context.session_variables[var_name]

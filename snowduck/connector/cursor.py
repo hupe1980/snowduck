@@ -116,7 +116,7 @@ class Cursor:
     def description(self) -> list[ResultMetadata]:
         table_name = self._infer_table_name()
         return describe_as_result_metadata(
-            self._describe_last_sql(),
+            self.describe_last_sql(),
             database=self._sf_conn.database,
             schema=self._sf_conn.schema,
             table=table_name,
@@ -506,7 +506,18 @@ class Cursor:
         command: str,
         params: Sequence[Any] | dict[Any, Any] | None = None,
     ) -> tuple[str, Sequence[Any] | dict[Any, Any] | None]:
-        if params and self._sf_conn.paramstyle in ("pyformat", "format"):
+        if not params:
+            return command, params
+        
+        # Check if using qmark style (?) - DuckDB supports this natively
+        # This is what Snowflake SQL REST API uses
+        if "?" in command and not isinstance(params, dict):
+            # Pass through to DuckDB which natively supports ? placeholders
+            return command, params
+        
+        # For pyformat/format style (%s), we need to do Python string formatting
+        # because DuckDB doesn't support %s syntax
+        if self._sf_conn.paramstyle in ("pyformat", "format"):
 
             def convert(param: Any) -> Any:
                 # Snowflake returns float for Python float parameters (REAL/FLOAT type)
