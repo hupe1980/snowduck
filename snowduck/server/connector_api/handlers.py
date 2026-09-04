@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 import os
 import secrets
 from base64 import b64encode
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import snowflake.connector
 from starlette.concurrency import run_in_threadpool
@@ -33,6 +34,8 @@ from ..shared import ServerError, session_manager, shared_connector
 
 if TYPE_CHECKING:
     from starlette.requests import Request
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -121,7 +124,7 @@ async def get_session_info(request: "Request") -> JSONResponse:
         cursor = conn.cursor()
         cursor.execute("SELECT current_database(), current_schema()")
         result = cursor.fetchone()
-        if result:
+        if isinstance(result, tuple):
             database = result[0]
             schema = result[1]
         cursor.close()
@@ -330,11 +333,11 @@ async def query_request(request: "Request") -> JSONResponse:
     sql_text = body_json["sqlText"]
     query_result_format = _detect_result_format(request, body_json)
 
-    print(body_json)
+    logger.debug("query-request body: %s", body_json)
 
     async with lock:
         try:
-            print("Executing SQL:", sql_text)
+            logger.debug("Executing SQL: %s", sql_text)
             cur = await run_in_threadpool(conn.cursor().execute, sql_text)
             describe_results = cur.describe_last_sql()
             overrides = None
@@ -359,9 +362,21 @@ async def query_request(request: "Request") -> JSONResponse:
                     "success": False,
                 }
             )
-        except Exception:
-            msg = f"Unhandled error during query {sql_text=}"
-            raise ServerError(status_code=500, code="261000", message=msg) from None
+        except Exception as e:
+            # Never surface a query failure as a 5xx: the Snowflake connector
+            # classifies every 5xx as retryable and will silently re-execute the
+            # statement until the network timeout expires. Report it the way
+            # Snowflake does - HTTP 200 with success=False - so the driver raises
+            # immediately instead of hanging.
+            logger.exception("Unhandled error during query: %s", sql_text)
+            return JSONResponse(
+                {
+                    "data": {"errorCode": "261000", "sqlState": "42000"},
+                    "code": "261000",
+                    "message": f"{type(e).__name__}: {e}",
+                    "success": False,
+                }
+            )
 
     data = _build_query_response(cur, conn, rowtype, query_result_format)
 
@@ -418,7 +433,7 @@ async def telemetry_send(request: "Request") -> JSONResponse:
             body = gzip.decompress(body)
 
         body_json = json.loads(body)
-        print("Received telemetry data:", body_json)
+        logger.debug("Received telemetry data: %s", body_json)
 
         return JSONResponse({"success": True, "message": "Telemetry data received."})
     except Exception as e:
@@ -434,7 +449,7 @@ async def telemetry_send(request: "Request") -> JSONResponse:
 # =============================================================================
 
 
-def _detect_result_format(request: "Request", body_json: dict) -> str:
+def _detect_result_format(request: "Request", body_json: dict[str, Any]) -> str:
     """Detect query result format from request."""
     query_result_format = body_json.get("queryResultFormat")
 
@@ -456,7 +471,9 @@ def _detect_result_format(request: "Request", body_json: dict) -> str:
     return query_result_format
 
 
-def _build_query_response(cur, conn, rowtype: list, query_result_format: str) -> dict:
+def _build_query_response(
+    cur: Any, conn: Any, rowtype: list[Any], query_result_format: str
+) -> dict[str, Any]:
     """Build query response data."""
     data = {
         "parameters": [],

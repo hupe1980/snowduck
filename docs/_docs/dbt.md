@@ -2,7 +2,7 @@
 layout: default
 title: dbt Integration
 parent: Documentation
-nav_order: 6
+nav_order: 7
 ---
 
 # dbt Integration

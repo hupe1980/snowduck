@@ -1,4 +1,6 @@
-from typing import cast
+from __future__ import annotations
+
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -25,7 +27,7 @@ def to_sf_schema(schema: pa.Schema, rowtype: list[ColumnInfo]) -> pa.Schema:
             f"Schema and rowtype must have the same length: {len(schema)=}, {len(rowtype)=}"
         )
 
-    def sf_field(field: pa.Field, column: ColumnInfo) -> pa.Field:
+    def sf_field(field: pa.Field[Any], column: ColumnInfo) -> pa.Field[Any]:
         """
         Convert a PyArrow field to a Snowflake-compatible field.
 
@@ -97,7 +99,7 @@ def to_sf(table: pa.Table, rowtype: list[ColumnInfo]) -> pa.Table:
         pa.Table: A transformed Snowflake-compatible table.
     """
 
-    def to_sf_col(col: pa.ChunkedArray) -> pa.Array | pa.ChunkedArray:
+    def to_sf_col(col: pa.ChunkedArray[Any]) -> pa.Array[Any] | pa.ChunkedArray[Any]:
         """
         Transform a PyArrow column to Snowflake-compatible format.
 
@@ -110,7 +112,11 @@ def to_sf(table: pa.Table, rowtype: list[ColumnInfo]) -> pa.Table:
         if pa.types.is_timestamp(col.type):
             return timestamp_to_sf_struct(col)
         if pa.types.is_time(col.type):
-            return pc.multiply(col.cast(pa.int64()), 1000)  # Convert to nanoseconds
+            # Convert to nanoseconds
+            return cast(
+                "pa.Array[Any] | pa.ChunkedArray[Any]",
+                pc.multiply(col.cast(pa.int64()), pa.scalar(1000, pa.int64())),
+            )
         return col
 
     return pa.Table.from_arrays(
@@ -119,7 +125,7 @@ def to_sf(table: pa.Table, rowtype: list[ColumnInfo]) -> pa.Table:
     )
 
 
-def timestamp_to_sf_struct(ts: pa.Array | pa.ChunkedArray) -> pa.Array:
+def timestamp_to_sf_struct(ts: pa.Array[Any] | pa.ChunkedArray[Any]) -> pa.Array[Any]:
     """
     Convert a timestamp column into a Snowflake-compatible struct.
 
@@ -134,14 +140,19 @@ def timestamp_to_sf_struct(ts: pa.Array | pa.ChunkedArray) -> pa.Array:
         AssertionError: If a timezone other than UTC is encountered.
     """
     if isinstance(ts, pa.ChunkedArray):
-        ts = cast(pa.Array, ts.combine_chunks())
+        ts = ts.combine_chunks()
 
     if not isinstance(ts.type, pa.TimestampType):
         raise ValueError(f"Expected TimestampArray, got {type(ts)}")
 
+    # The isinstance check above establishes this, but the stubs can't narrow it.
+    ts = cast("pa.TimestampArray", ts)
+
     tsa_without_us = pc.floor_temporal(ts, unit="second")  # Strip subseconds
-    epoch = pc.divide(tsa_without_us.cast(pa.int64()), 1_000_000)
-    fraction = pc.multiply(pc.subsecond(ts), 1_000_000_000).cast(pa.int32())
+    epoch = pc.divide(tsa_without_us.cast(pa.int64()), pa.scalar(1_000_000, pa.int64()))
+    fraction = pc.multiply(pc.subsecond(ts), pa.scalar(1_000_000_000, pa.int64())).cast(
+        pa.int32()
+    )
 
     if ts.type.tz:
         if ts.type.tz != "UTC":

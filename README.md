@@ -23,9 +23,11 @@ SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavi
 
 | Category | Functions |
 |----------|-----------|
-| **DDL Operations** | CREATE/DROP DATABASE, SCHEMA, TABLE |
+| **DDL Operations** | CREATE/DROP DATABASE, SCHEMA, TABLE, VIEW, SEQUENCE, STAGE |
 | **DML Operations** | INSERT, UPDATE, DELETE, MERGE |
-| **Advanced SQL** | CTEs, JOINs, subqueries, CASE, QUALIFY |
+| **Advanced SQL** | CTEs, JOINs, subqueries, CASE, QUALIFY, LIKE ANY/ALL |
+| **SQL UDFs** | CREATE FUNCTION ... AS $$ ... $$ (scalar and table) |
+| **Table Functions** | TABLE(...), FLATTEN, SPLIT_TO_TABLE, LATERAL FLATTEN |
 | **Session Variables** | SET/SELECT \$variable syntax |
 | **Information Schema** | Query metadata (databases, tables, columns) |
 
@@ -33,21 +35,65 @@ SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavi
 
 | Category | Functions |
 |----------|-----------|
-| **String** | CONCAT, CONCAT_WS, SPLIT, SPLIT_PART, CONTAINS, REPLACE, TRIM, LTRIM, RTRIM, LPAD, RPAD, SPACE, STRTOK, TRANSLATE, REVERSE, STARTSWITH, ENDSWITH, ASCII, CHR, INITCAP, SOUNDEX, UPPER, LOWER, LENGTH, LEN, SUBSTR, SUBSTRING, INSTR, POSITION |
-| **Date/Time** | DATEADD, DATEDIFF, TIMEDIFF, DATE_TRUNC, DATE_PART, EXTRACT, LAST_DAY, ADD_MONTHS, DATE_FROM_PARTS, TIME_FROM_PARTS, TIMESTAMP_FROM_PARTS, CONVERT_TIMEZONE, TO_DATE, TO_TIMESTAMP |
+| **String** | CONCAT, CONCAT_WS, SPLIT, SPLIT_PART, CONTAINS, REPLACE, TRIM, LTRIM, RTRIM, LPAD, RPAD, SPACE, STRTOK, TRANSLATE, REVERSE, STARTSWITH, ENDSWITH, ASCII, CHR, INITCAP, SOUNDEX, UPPER, LOWER, LENGTH, LEN, SUBSTR, SUBSTRING, INSTR, POSITION, INSERT, RTRIMMED_LENGTH, EDITDISTANCE, JAROWINKLER_SIMILARITY, PARSE_URL |
+| **Date/Time** | DATEADD, DATEDIFF, TIMEDIFF, DATE_TRUNC, DATE_PART, EXTRACT, LAST_DAY, NEXT_DAY, PREVIOUS_DAY, DAYNAME, MONTHNAME, TIME_SLICE, YEAROFWEEK, ADD_MONTHS, DATE_FROM_PARTS, TIME_FROM_PARTS, TIMESTAMP_FROM_PARTS, CONVERT_TIMEZONE, TO_DATE, TO_TIMESTAMP |
 | **Numeric** | ABS, CEIL, FLOOR, ROUND, MOD, SQRT, POWER, EXP, LN, LOG, SIGN, DIV0, DIV0NULL, WIDTH_BUCKET, TRUNCATE, CBRT, FACTORIAL, DEGREES, RADIANS, PI, RANDOM, GREATEST, LEAST |
 | **Aggregate** | COUNT, SUM, AVG, MIN, MAX, MEDIAN, LISTAGG, ANY_VALUE, KURTOSIS, SKEW, COVAR_POP, COVAR_SAMP |
 | **Window** | ROW_NUMBER, RANK, DENSE_RANK, LEAD, LAG, FIRST_VALUE, LAST_VALUE |
-| **JSON** | PARSE_JSON, OBJECT_CONSTRUCT, OBJECT_INSERT, GET_PATH, TRY_PARSE_JSON, OBJECT_KEYS, CHECK_JSON, TO_JSON |
+| **JSON** | PARSE_JSON, OBJECT_CONSTRUCT, OBJECT_CONSTRUCT_KEEP_NULL, OBJECT_INSERT, OBJECT_DELETE, OBJECT_PICK, OBJECT_AGG, GET_PATH, TRY_PARSE_JSON, OBJECT_KEYS, CHECK_JSON, TO_JSON, TO_OBJECT |
+| **VARIANT** | IS_ARRAY, IS_OBJECT, IS_NULL_VALUE, IS_INTEGER, IS_DOUBLE, IS_BOOLEAN, IS_VARCHAR, AS_VARCHAR, AS_INTEGER, AS_DOUBLE, AS_BOOLEAN, AS_DATE, TYPEOF |
 | **Array** | ARRAY_CONSTRUCT, ARRAY_SIZE, ARRAY_CONTAINS, FLATTEN, ARRAY_SLICE, ARRAY_CAT, ARRAY_APPEND, ARRAY_PREPEND, ARRAY_SORT, ARRAY_REVERSE, ARRAY_MIN, ARRAY_MAX, ARRAY_SUM, ARRAYS_OVERLAP, ARRAY_DISTINCT, ARRAY_INTERSECTION, ARRAY_EXCEPT |
-| **Conditional** | NVL, NVL2, DECODE, IFF, COALESCE, NULLIF, EQUAL_NULL, ZEROIFNULL, NULLIFZERO |
-| **Conversion** | TO_CHAR, TO_NUMBER, TO_BOOLEAN, TO_DATE, TRY_CAST, TRY_TO_NUMBER, TRY_TO_DATE, TRY_TO_TIMESTAMP, TRY_TO_BOOLEAN |
-| **Regex** | REGEXP_LIKE, REGEXP_SUBSTR, REGEXP_REPLACE, REGEXP_COUNT |
+| **Conditional** | NVL, NVL2, DECODE, IFF, COALESCE, NULLIF, EQUAL_NULL, ZEROIFNULL, NULLIFZERO, BOOLAND, BOOLOR, BOOLXOR, BOOLNOT |
+| **Conversion** | TO_CHAR, TO_NUMBER, TO_DECIMAL, TO_NUMERIC, TO_BOOLEAN, TO_DATE, TRY_CAST, TRY_TO_NUMBER, TRY_TO_DECIMAL, TRY_TO_DATE, TRY_TO_TIMESTAMP, TRY_TO_BOOLEAN |
+| **Regex** | REGEXP_LIKE, RLIKE, REGEXP_SUBSTR, REGEXP_SUBSTR_ALL, REGEXP_REPLACE, REGEXP_COUNT, REGEXP_INSTR |
 | **Hash** | MD5, SHA1, SHA2, SHA256, HASH |
 | **Encoding** | BASE64_ENCODE, BASE64_DECODE_STRING, HEX_ENCODE, HEX_DECODE_STRING |
 | **Bitwise** | BITAND, BITOR, BITXOR, BITNOT, BITAND_AGG, BITOR_AGG, BITXOR_AGG |
 | **Boolean Agg** | BOOLAND_AGG, BOOLOR_AGG |
-| **Utility** | UUID_STRING, TYPEOF |
+| **Utility** | UUID_STRING, TYPEOF, HLL |
+| **Context** | CURRENT_VERSION, CURRENT_ACCOUNT, CURRENT_CLIENT, CURRENT_SESSION, CURRENT_REGION, CURRENT_ROLE, CURRENT_DATABASE, CURRENT_SCHEMA, CURRENT_WAREHOUSE |
+
+### Snowflake Semantics, Not Just Snowflake Syntax
+
+SnowDuck matches Snowflake's *behaviour*, not only its function names. The
+cases below all return a different answer under a naive DuckDB translation, so
+they are pinned by an executable conformance suite
+(`tests/conformance/`):
+
+| Snowflake behaviour | Result |
+|---------------------|--------|
+| `REGEXP_LIKE` anchors the pattern at both ends | `REGEXP_LIKE('xabcx','a.c')` → `FALSE` |
+| `REGEXP_SUBSTR` returns NULL when nothing matches | `REGEXP_SUBSTR('abc','[0-9]+')` → `NULL` |
+| `REGEXP_REPLACE` replaces *every* occurrence by default | `REGEXP_REPLACE('a1b2','[0-9]','X')` → `aXbX` |
+| `TO_NUMBER` defaults to `NUMBER(38,0)` and rounds | `TO_NUMBER('123.45')` → `123` |
+| `TO_NUMBER(x, p, s)` yields exact DECIMAL, not DOUBLE | `TO_NUMBER('123.45',10,2)` → `123.45` |
+| `OBJECT_CONSTRUCT` drops NULL-valued keys | `OBJECT_CONSTRUCT('a',1,'b',NULL)` → `{"a":1}` |
+| `OBJECT_CONSTRUCT_KEEP_NULL` keeps them | → `{"a":1,"b":null}` |
+| `DAYNAME`/`MONTHNAME` return 3-letter abbreviations | `DAYNAME(...)` → `Mon` |
+| `GET` indexes arrays from 0 | `GET(ARRAY_CONSTRUCT('a','b'),1)` → `b` |
+| `CONCAT_WS` does not skip NULLs | `CONCAT_WS('-','a',NULL)` → `NULL` |
+| `DIV0NULL` returns 0, not NULL | `DIV0NULL(10,0)` → `0` |
+| `FLATTEN` exposes all six columns | `SEQ, KEY, PATH, INDEX, VALUE, THIS` |
+| `OBJECT_CONSTRUCT` drops NULLs top-level only | nested nulls survive |
+| Arrays are heterogeneous | `ARRAY_CONSTRUCT(1,'two')` → `[1,"two"]` |
+| A format model sets decoration, not scale | `TO_NUMBER('$1,234.56','$9,999.99')` → `1235` |
+
+### SQL User-Defined Functions
+
+```python
+cur.execute("""
+    CREATE OR REPLACE FUNCTION is_valid_id(id VARCHAR)
+    RETURNS BOOLEAN
+    AS $$ LENGTH(id) = 11 AND REGEXP_LIKE(id, '[0-9]+') $$
+""")
+
+cur.execute("SELECT is_valid_id('12345678901')")  # -> True
+```
+
+Scalar and table UDFs are compiled to DuckDB macros, and the body is translated
+through the same pipeline as any other statement - so Snowflake functions used
+inside a UDF work too. Non-SQL UDFs (JavaScript, Python) raise a clear error
+rather than silently returning the wrong thing.
 
 ### Cursor Methods
 
@@ -213,8 +259,9 @@ The server provides:
            │
            ▼
 ┌─────────────────────┐
-│  SQL Translator     │  ← Snowflake → DuckDB dialect
-└──────────┬──────────┘
+│  SQL Translator     │  ← AST rewrites, then sqlglot's
+└──────────┬──────────┘    DuckDB generator
+           │
            │
            ▼
 ┌─────────────────────┐

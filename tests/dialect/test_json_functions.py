@@ -163,3 +163,32 @@ def test_nested_json_operations(conn):
     assert results[0][2] == "Alice"
     assert results[1][1] == "logout"
     assert results[1][2] == "Bob"
+
+
+def test_object_construct_drops_nulls(conn):
+    """Snowflake's OBJECT_CONSTRUCT omits key/value pairs whose value is NULL."""
+    cur = conn.cursor()
+    cur.execute("SELECT OBJECT_CONSTRUCT('a', 1, 'b', NULL)")
+    result = cur.fetchone()[0]
+    parsed = json.loads(result) if isinstance(result, str) else result
+    assert parsed == {"a": 1}
+
+
+def test_object_construct_keep_null_retains_nulls(conn):
+    """OBJECT_CONSTRUCT_KEEP_NULL is the variant that keeps them."""
+    cur = conn.cursor()
+    cur.execute("SELECT OBJECT_CONSTRUCT_KEEP_NULL('a', 1, 'b', NULL)")
+    result = cur.fetchone()[0]
+    parsed = json.loads(result) if isinstance(result, str) else result
+    assert parsed == {"a": 1, "b": None}
+
+
+def test_object_construct_drops_runtime_nulls(conn):
+    """The NULL check is at runtime, not just for NULL literals."""
+    cur = conn.cursor()
+    cur.execute("CREATE OR REPLACE TABLE oc_nulls (a INT, b INT)")
+    cur.execute("INSERT INTO oc_nulls VALUES (1, NULL)")
+    cur.execute("SELECT OBJECT_CONSTRUCT('a', a, 'b', b) FROM oc_nulls")
+    result = cur.fetchone()[0]
+    parsed = json.loads(result) if isinstance(result, str) else result
+    assert parsed == {"a": 1}

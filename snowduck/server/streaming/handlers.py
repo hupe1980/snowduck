@@ -14,7 +14,7 @@ import gzip
 import io
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -166,7 +166,7 @@ async def get_table_info(request: Request) -> JSONResponse:
               AND table_name = '{table}'
             ORDER BY ordinal_position
         """)
-        columns = cursor.fetchall()
+        columns = cast(list[tuple[Any, ...]], cursor.fetchall())
         cursor.close()
 
         if not columns:
@@ -494,6 +494,12 @@ async def append_rows(request: Request) -> JSONResponse:
         offset_token=offset_token,
     )
 
+    if channel is None:
+        return JSONResponse(
+            {"code": "CHANNEL_NOT_FOUND", "message": "Channel not found"},
+            status_code=404,
+        )
+
     return JSONResponse(
         {
             "next_continuation_token": channel.continuation_token,
@@ -557,7 +563,7 @@ async def _decompress_body(request: Request) -> bytes:
     return body
 
 
-def _parse_ndjson(data: str) -> list[dict]:
+def _parse_ndjson(data: str) -> list[dict[str, Any]]:
     """Parse newline-delimited JSON format."""
     rows = []
     for line in data.strip().split("\n"):
@@ -606,7 +612,9 @@ def _get_sdk_parameters() -> dict[str, int]:
     }
 
 
-def _create_table_if_needed(cursor: Any, table_name: str, sample_row: dict) -> None:
+def _create_table_if_needed(
+    cursor: Any, table_name: str, sample_row: dict[str, Any]
+) -> None:
     """Auto-create table based on first row structure."""
     col_defs = []
     for col, val in sample_row.items():
@@ -625,7 +633,7 @@ def _create_table_if_needed(cursor: Any, table_name: str, sample_row: dict) -> N
     cursor.execute(sql)
 
 
-def _insert_rows(cursor: Any, table_name: str, rows: list[dict]) -> None:
+def _insert_rows(cursor: Any, table_name: str, rows: list[dict[str, Any]]) -> None:
     """Insert rows into table."""
     if not rows:
         return
@@ -636,7 +644,7 @@ def _insert_rows(cursor: Any, table_name: str, rows: list[dict]) -> None:
     sql = f'INSERT INTO "{table_name}" ({columns_str}) VALUES ({placeholders})'
 
     for row in rows:
-        values = []
+        values: list[Any] = []
         for col in columns:
             val = row.get(col)
             if isinstance(val, (dict, list)):

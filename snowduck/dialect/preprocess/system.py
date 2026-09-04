@@ -13,8 +13,73 @@ def preprocess_current_schema(
 ) -> exp.Expression:
     """Convert current schema to the correct format."""
     if isinstance(expression, exp.CurrentSchema):
-        return exp.Literal.string(context.current_schema or "INFORMATION_SCHEMA")
+        return _named(
+            exp.Literal.string(context.current_schema or "INFORMATION_SCHEMA"),
+            "CURRENT_SCHEMA()",
+            expression,
+        )
     return expression
+
+
+def _named(
+    value: exp.Expression, column_name: str, original: exp.Expression
+) -> exp.Expression:
+    """Alias a substituted session value the way Snowflake names the column.
+
+    Only bare projections get an alias - an expression nested inside a larger
+    one must stay an expression.
+    """
+    if isinstance(original.parent, exp.Select):
+        return exp.Alias(
+            this=value, alias=exp.Identifier(this=column_name, quoted=True)
+        )
+    return value
+
+
+# sqlglot models these as dedicated nodes rather than Anonymous calls.
+_TYPED_SESSION_FUNCTIONS: dict[type[exp.Expression], str] = {
+    node: name
+    for node, name in (
+        (getattr(exp, "CurrentRole", None), "CURRENT_ROLE"),
+        (getattr(exp, "CurrentDatabase", None), "CURRENT_DATABASE"),
+        (getattr(exp, "CurrentWarehouse", None), "CURRENT_WAREHOUSE"),
+        (getattr(exp, "CurrentSecondaryRoles", None), "CURRENT_SECONDARY_ROLES"),
+    )
+    if node is not None
+}
+
+
+def preprocess_session_info(
+    expression: exp.Expression, context: DialectContext
+) -> exp.Expression:
+    """Replace session context functions with their configured values.
+
+    This runs as an AST rewrite rather than a generator transform on
+    ``exp.Select``: a generator transform has to re-render the whole statement
+    as a string, which silently dropped everything after the projection list
+    (so ``SELECT CURRENT_DATABASE(), COUNT(*) FROM t`` lost its FROM and
+    counted one row).
+    """
+    typed = _TYPED_SESSION_FUNCTIONS.get(type(expression))
+    if typed is not None:
+        name = typed
+    elif isinstance(expression, exp.Anonymous) and isinstance(expression.this, str):
+        name = expression.this.upper()
+    else:
+        return expression
+
+    if name == "CURRENT_ROLE":
+        value = context.current_role or "SYSADMIN"
+    elif name == "CURRENT_DATABASE":
+        value = context.current_database or ""
+    elif name == "CURRENT_WAREHOUSE":
+        value = context.current_warehouse or "DEFAULT_WAREHOUSE"
+    elif name == "CURRENT_SECONDARY_ROLES":
+        value = json.dumps({"roles": "", "value": "ALL"})
+    else:
+        return expression
+
+    return _named(exp.Literal.string(value), f"{name}()", expression)
 
 
 def preprocess_system_calls(

@@ -81,14 +81,19 @@ def test_concat_ws_basic():
 
 @mock_snowflake
 def test_concat_ws_with_nulls():
-    """Test CONCAT_WS skips NULL values."""
+    """CONCAT_WS returns NULL if any argument is NULL.
+
+    Snowflake: "Unlike some implementations of the CONCAT_WS function, the
+    Snowflake CONCAT_WS function doesn't skip NULL values."
+    """
     conn = snowflake.connector.connect()
     cur = conn.cursor()
 
     cur.execute("SELECT CONCAT_WS('-', 'a', NULL, 'c')")
-    result = cur.fetchone()[0]
+    assert cur.fetchone()[0] is None
 
-    assert result == "a-c"
+    cur.execute("SELECT CONCAT_WS('-', 'a', 'b', 'c')")
+    assert cur.fetchone()[0] == "a-b-c"
 
 
 # =============================================================================

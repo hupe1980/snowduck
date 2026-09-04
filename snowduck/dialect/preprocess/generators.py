@@ -5,10 +5,147 @@ from sqlglot import exp
 from ..context import DialectContext
 
 
+def _numeric_type(
+    precision: exp.Expression | None, scale: exp.Expression | None
+) -> exp.DataType:
+    """Build the DuckDB target type for a Snowflake numeric conversion.
+
+    Snowflake's TO_NUMBER/TO_DECIMAL take (precision, scale) and return an exact
+    NUMBER. Dropping them and casting to DOUBLE turns exact decimal arithmetic
+    into binary floating point, which silently changes results for things like
+    check-digit and money calculations.
+    """
+    # Snowflake's default is NUMBER(38, 0): a bare TO_NUMBER('123.45') yields
+    # 123, because reducing the scale rounds rather than truncates.
+    if precision is None:
+        return exp.DataType.build("DECIMAL(38, 0)")
+
+    def _int(node: exp.Expression | None, default: int) -> int:
+        if isinstance(node, exp.Literal) and not node.is_string:
+            try:
+                return int(node.this)
+            except (TypeError, ValueError):
+                return default
+        return default
+
+    # DuckDB's DECIMAL tops out at precision 38, same as Snowflake's NUMBER.
+    prec = min(_int(precision, 38), 38)
+    return exp.DataType.build(f"DECIMAL({prec}, {_int(scale, 0)})")
+
+
+def _numeric_args_from_list(
+    args: list[exp.Expression],
+) -> tuple[exp.Expression | None, exp.Expression | None]:
+    """Pull (precision, scale) out of the trailing args of a TO_DECIMAL-style call.
+
+    A leading string argument is a format model, not a precision.
+    """
+    numeric = [a for a in args if not (isinstance(a, exp.Literal) and a.is_string)]
+    precision = numeric[0] if len(numeric) >= 1 else None
+    scale = numeric[1] if len(numeric) >= 2 else None
+    return precision, scale
+
+
+def _apply_number_format(
+    value: exp.Expression, fmt: exp.Expression | None
+) -> exp.Expression:
+    """Strip the decoration a TO_NUMBER format model describes.
+
+    Snowflake format models such as `$9,999.99` or `999,999` describe currency
+    symbols and group separators around the digits. Rather than interpreting
+    the model, the characters it allows for decoration are removed before the
+    cast, which is what the model means for parsing: `TO_NUMBER('$1,234.56',
+    '$9,999.99')` -> 1234.56.
+    """
+    if not (isinstance(fmt, exp.Literal) and fmt.is_string):
+        return value
+    return exp.Anonymous(
+        this="regexp_replace",
+        expressions=[
+            value,
+            exp.Literal.string(r"[^0-9.\-]"),
+            exp.Literal.string(""),
+            exp.Literal.string("g"),
+        ],
+    )
+
+
+def _width_bucket(expression: exp.WidthBucket) -> exp.Expression:
+    """WIDTH_BUCKET(value, min, max, count) -> the 1-based bucket index.
+
+    Values below `min` fall in bucket 0 and values at or above `max` in
+    bucket count+1, matching Snowflake.
+    """
+    value = expression.this
+    low = expression.args["min_value"]
+    high = expression.args["max_value"]
+    buckets = expression.args["num_buckets"]
+
+    scaled = exp.Div(
+        this=exp.Paren(this=exp.Sub(this=value.copy(), expression=low.copy())),
+        expression=exp.Paren(this=exp.Sub(this=high.copy(), expression=low.copy())),
+    )
+    index = exp.Add(
+        this=exp.Cast(
+            this=exp.Anonymous(
+                this="floor",
+                expressions=[
+                    exp.Mul(this=exp.Paren(this=scaled), expression=buckets.copy())
+                ],
+            ),
+            to=exp.DataType.build("BIGINT"),
+        ),
+        expression=exp.Literal.number(1),
+    )
+    return exp.Case(
+        ifs=[
+            exp.If(
+                this=exp.LT(this=value.copy(), expression=low.copy()),
+                true=exp.Literal.number(0),
+            ),
+            exp.If(
+                this=exp.GTE(this=value.copy(), expression=high.copy()),
+                true=exp.Add(this=buckets.copy(), expression=exp.Literal.number(1)),
+            ),
+        ],
+        default=index,
+    )
+
+
 def preprocess_special_expressions(
     expression: exp.Expression, context: DialectContext
 ) -> exp.Expression:
     """Transform special expression types that aren't Anonymous functions."""
+
+    if (
+        isinstance(expression, exp.Drop)
+        and str(expression.args.get("kind")).upper() == "FUNCTION"
+    ):
+        # Snowflake identifies a UDF by its signature (DROP FUNCTION f(VARCHAR));
+        # a DuckDB macro is identified by name alone, and the signature is a
+        # syntax error there.
+        dropped = expression.copy()
+        dropped.set("kind", "MACRO")
+        dropped.set("expressions", None)
+        return dropped
+
+    if isinstance(expression, exp.ToNumber):
+        # TO_NUMBER / TO_DECIMAL / TO_NUMERIC and their TRY_ variants, which
+        # arrive as the same node with `safe` set.
+        target = _numeric_type(
+            expression.args.get("precision"), expression.args.get("scale")
+        )
+        value = _apply_number_format(expression.this, expression.args.get("format"))
+        if expression.args.get("safe"):
+            return exp.TryCast(this=value, to=target)
+        return exp.Cast(this=value, to=target)
+
+    if isinstance(expression, exp.ToVariant):
+        # Snowflake VARIANT is modelled as DuckDB JSON.
+        return exp.Cast(this=expression.this, to=exp.DataType.build("JSON"))
+
+    if isinstance(expression, exp.WidthBucket):
+        return _width_bucket(expression)
 
     if isinstance(expression, exp.Space):
         # SPACE(n) -> REPEAT(' ', n) in DuckDB
@@ -39,33 +176,6 @@ def preprocess_special_expressions(
                 this="json_merge_patch", expressions=[obj_expr, new_obj]
             )
 
-    return expression
-
-
-def preprocess_regexp_replace(
-    expression: exp.Expression, context: DialectContext
-) -> exp.Expression:
-    """Transform REGEXP_REPLACE to preserve the 'g' flag for global replacement.
-
-    Snowflake's REGEXP_REPLACE has syntax:
-        REGEXP_REPLACE(subject, pattern, replacement, position, occurrence, parameters)
-    Where position=1 by default, occurrence=0 means all, parameters='c' (case-sensitive).
-
-    When 'g' is passed as the 4th argument (position), sqlglot misinterprets it.
-    DuckDB supports: REGEXP_REPLACE(string, pattern, replacement, options)
-    where options can include 'g' for global replacement.
-    """
-    if isinstance(expression, exp.RegexpReplace):
-        # Check if there's a 'g' flag in the position argument
-        position = expression.args.get("position")
-        if position and isinstance(position, exp.Literal) and position.this == "g":
-            # Reconstruct with 'g' as the modifiers for DuckDB
-            return exp.RegexpReplace(
-                this=expression.this,
-                expression=expression.expression,
-                replacement=expression.args.get("replacement"),
-                modifiers=exp.Literal.string("g"),
-            )
     return expression
 
 
@@ -219,19 +329,6 @@ def preprocess_seq_functions(
                     ],
                     default=normal_bucket,
                 )
-
-        elif fname == "REGEXP_COUNT":
-            # REGEXP_COUNT(subject, pattern) ->
-            # len(regexp_extract_all(subject, pattern))
-            # DuckDB: SELECT length(regexp_extract_all('abc123def456', '[0-9]+'))
-            args = expression.expressions
-            if len(args) >= 2:
-                subject = args[0]
-                pattern = args[1]
-                extract_all = exp.Anonymous(
-                    this="regexp_extract_all", expressions=[subject, pattern]
-                )
-                return exp.Anonymous(this="length", expressions=[extract_all])
 
         elif fname == "TRUNCATE":
             # TRUNCATE(x, p) -> TRUNC(x, p) in DuckDB
@@ -655,11 +752,28 @@ def preprocess_seq_functions(
             if len(args) == 1:
                 return exp.Nullif(this=args[0], expression=exp.Literal.number(0))
 
-        elif fname == "TRY_TO_NUMBER":
-            # TRY_TO_NUMBER(str) -> TRY_CAST(str AS DOUBLE)
+        elif fname in ("TO_DECIMAL", "TO_NUMERIC"):
+            # TO_DECIMAL/TO_NUMERIC are synonyms of TO_NUMBER. Snowflake parses
+            # TO_NUMBER into exp.ToNumber but leaves these as Anonymous, so
+            # without this branch they reach DuckDB verbatim and fail with
+            # "Scalar Function with name to_decimal does not exist".
             args = expression.expressions
             if len(args) >= 1:
-                return exp.TryCast(this=args[0], to=exp.DataType.build("DOUBLE"))
+                precision, scale = _numeric_args_from_list(args[1:])
+                return exp.Cast(this=args[0], to=_numeric_type(precision, scale))
+
+        elif fname in ("TRY_TO_DECIMAL", "TRY_TO_NUMERIC"):
+            args = expression.expressions
+            if len(args) >= 1:
+                precision, scale = _numeric_args_from_list(args[1:])
+                return exp.TryCast(this=args[0], to=_numeric_type(precision, scale))
+
+        elif fname == "TRY_TO_NUMBER":
+            # TRY_TO_NUMBER(str [, precision [, scale]]) -> TRY_CAST(str AS ...)
+            args = expression.expressions
+            if len(args) >= 1:
+                precision, scale = _numeric_args_from_list(args[1:])
+                return exp.TryCast(this=args[0], to=_numeric_type(precision, scale))
 
         elif fname == "TRY_TO_DATE":
             # TRY_TO_DATE(str) -> TRY_CAST(str AS DATE)

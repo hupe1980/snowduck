@@ -61,7 +61,7 @@ def test_to_varchar(dialect_context):
 
 
 def test_to_number(dialect_context):
-    """Test TO_NUMBER function."""
+    """TO_NUMBER defaults to NUMBER(38, 0), so a bare call rounds to an integer."""
     sql = "SELECT TO_NUMBER('123.45')"
     expression = parse_one(sql, read="snowflake")
 
@@ -72,7 +72,7 @@ def test_to_number(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    assert float(res[0]) == pytest.approx(123.45)
+    assert res[0] == 123
 
 
 def test_try_cast_valid(dialect_context):
@@ -167,3 +167,44 @@ def test_to_boolean_false(dialect_context):
     res = conn.execute(transpiled).fetchone()
     # First value should be False
     assert res[0] is False
+
+
+def test_to_number_precision_and_scale(conn):
+    """TO_NUMBER(expr, precision, scale) must produce an exact DECIMAL, not a DOUBLE."""
+    from decimal import Decimal
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT TO_NUMBER('123.45', 10, 2)")
+        result = cur.fetchone()[0]
+        assert isinstance(result, Decimal)
+        assert result == Decimal("123.45")
+
+
+def test_to_number_large_integer_is_exact(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT TO_NUMBER('12345678901234567890123', 38, 0)")
+        assert str(cur.fetchone()[0]) == "12345678901234567890123"
+
+
+def test_to_number_with_format_and_precision(conn):
+    """A leading string argument is a format model, not the precision."""
+    from decimal import Decimal
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT TO_NUMBER('123.456', '999.999', 10, 2)")
+        assert cur.fetchone()[0] == Decimal("123.46")
+
+
+def test_to_decimal(conn):
+    """TO_DECIMAL/TO_NUMERIC are synonyms of TO_NUMBER and must not reach DuckDB raw."""
+    from decimal import Decimal
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT TO_DECIMAL('123.45', 10, 2), TO_NUMERIC('7', 5, 0)")
+        assert cur.fetchone() == (Decimal("123.45"), Decimal("7"))
+
+
+def test_try_to_decimal_returns_null_on_bad_input(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT TRY_TO_DECIMAL('abc', 10, 2)")
+        assert cur.fetchone()[0] is None

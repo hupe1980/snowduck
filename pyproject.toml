@@ -1,6 +1,6 @@
 [project]
 name = "snowduck"
-version = "0.0.5"
+version = "0.1.0"
 description = "Run Snowflake SQL locally, powered by DuckDB - lightweight in-memory SQL engine for development and testing"
 authors = [
     {name = "hupe1980"}
@@ -13,15 +13,24 @@ requires-python = ">=3.11,<4"
 keywords = ["snowflake", "duckdb", "sql", "testing", "mock", "database", "data-engineering"]
 dependencies = [
     "duckdb (>=1.2.1,<2.0.0)",
-    "snowflake-connector-python (>=3.14.0,<4.0.0)",
-    "sqlglot[rs] (>=26.12.0,<27.0.0)",
-    "pyarrow (<19.0.0)",
+    # 3.17.0 dropped the connector's own pyarrow <19 pin (an Azure Batch workaround).
+    "snowflake-connector-python (>=3.17.0,<4.0.0)",
+    # sqlglot[rs] is deprecated; sqlglot[c] is the current accelerator.
+    # 30.x ships mypyc-compiled generators, which cannot be subclassed from
+    # Python - SnowDuck customises Dialect.generate() instead.
+    "sqlglot[c] (>=30.18.0,<31.0.0)",
+    # Must stay unpinned at the top end: pyarrow <19 ships no cp314 wheels, so a
+    # <19 pin makes `pip install snowduck` fall back to a source build on Python 3.14.
+    "pyarrow (>=18.0.0)",
 ]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries",
     "Topic :: Database",
 ]
@@ -44,6 +53,7 @@ dev = [
     "mypy>=1.15.0",
     "jupyter>=1.1.1",
     "pyarrow-stubs>=17.19",
+    "pandas-stubs>=2.2",
     "numpy>=2.2.4",
     "pandas>=2.2.3",
     "pytest-asyncio>=0.26.0",

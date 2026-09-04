@@ -33,12 +33,28 @@ SQL_CREATED_SCHEMA = Template(
 )
 SQL_CREATED_TABLE = Template("SELECT 'Table ${name} successfully created.' as 'status'")
 SQL_CREATED_VIEW = Template("SELECT 'View ${name} successfully created.' as 'status'")
+SQL_CREATED_FUNCTION = Template(
+    "SELECT 'Function ${name} successfully created.' as 'status'"
+)
 SQL_DROPPED = Template("SELECT '${name} successfully dropped.' as 'status'")
 SQL_INSERTED_ROWS = Template("SELECT ${count} as 'number of rows inserted'")
 SQL_UPDATED_ROWS = Template(
     "SELECT ${count} as 'number of rows updated', 0 as 'number of multi-joined rows updated'"
 )
 SQL_DELETED_ROWS = Template("SELECT ${count} as 'number of rows deleted'")
+
+
+def _single_source_table(select: exp.Select) -> exp.Table | None:
+    """The table a simple `SELECT ... FROM t` reads from, if there is exactly one.
+
+    sqlglot names this argument ``from_``; older releases used ``from``. Both
+    are accepted so the lookup does not silently return nothing after an
+    upgrade - which is how nullability inference quietly stopped working.
+    """
+    source = select.args.get("from_") or select.args.get("from")
+    if source is None or not isinstance(source.this, exp.Table):
+        return None
+    return source.this
 
 
 def extract_sql_command(expression: exp.Expression) -> str:
@@ -110,7 +126,7 @@ class Cursor:
             list[ResultMetadata]: _description_
         """
         self.execute(f"DESCRIBE {command}", *args, **kwargs)
-        return describe_as_result_metadata(self.fetchall())
+        return describe_as_result_metadata(cast(Any, self.fetchall()))
 
     @property
     def description(self) -> list[ResultMetadata]:
@@ -122,19 +138,21 @@ class Cursor:
             table=table_name,
         )
 
-    def describe_last_sql(self) -> list:
+    def describe_last_sql(self) -> list[Any]:
         if not self._duck_cur.description:
             raise TypeError("No result set available to describe")
         nullability = self._infer_nullability()
         if nullability:
-            patched = []
+            patched: list[tuple[Any, ...]] = []
             for column in self._duck_cur.description:
                 name, type_name, *rest = column
                 null_ok = nullability.get(name)
                 patched.append((name, type_name, None, None, None, null_ok))
-            return convert_dbapi_description_to_describe(patched)
+            return cast(list[Any], convert_dbapi_description_to_describe(patched))
 
-        return convert_dbapi_description_to_describe(self._duck_cur.description)
+        return cast(
+            list[Any], convert_dbapi_description_to_describe(self._duck_cur.description)
+        )
 
     def _infer_table_name(self) -> str | None:
         if not self._last_sql:
@@ -147,11 +165,9 @@ class Cursor:
         if not isinstance(expr, exp.Select):
             return None
 
-        from_expr = expr.args.get("from")
-        if not from_expr or not isinstance(from_expr.this, exp.Table):
+        table = _single_source_table(expr)
+        if table is None:
             return None
-
-        table = from_expr.this
         return table.name if table.name else None
 
     def _infer_nullability(self) -> dict[str, bool]:
@@ -165,26 +181,34 @@ class Cursor:
         if not isinstance(expr, exp.Select):
             return {}
 
-        from_expr = expr.args.get("from")
-        if not from_expr or not isinstance(from_expr.this, exp.Table):
+        table = _single_source_table(expr)
+        if table is None:
             return {}
-
-        table = from_expr.this
         table_name = table.name
         if not table_name:
             return {}
 
-        schema = table.db or "main"
-        pragma_target = f"{schema}.{table_name}"
+        # An unqualified table lives in the session's schema, not DuckDB's
+        # "main" - looking in the wrong place made every column report as
+        # nullable.
+        catalog = table.catalog or self._sf_conn.database
+        schema = table.db or self._sf_conn.schema
+        candidates = [
+            ".".join(part for part in (catalog, schema, table_name) if part),
+            ".".join(part for part in (schema, table_name) if part),
+            table_name,
+        ]
 
-        try:
-            pragma_cur = self._duck_cur.connection.cursor()
-            rows = pragma_cur.execute(
-                f"PRAGMA table_info('{pragma_target}')"
-            ).fetchall()
-            pragma_cur.close()
-        except Exception:
-            return {}
+        rows: list[tuple[Any, ...]] = []
+        for target in dict.fromkeys(candidates):
+            try:
+                pragma_cur = self._duck_cur.cursor()
+                rows = pragma_cur.execute(f"PRAGMA table_info('{target}')").fetchall()
+                pragma_cur.close()
+            except Exception:
+                continue
+            if rows:
+                break
 
         mapping: dict[str, bool] = {}
         for _cid, name, _type, notnull, _default, _pk in rows:
@@ -208,7 +232,7 @@ class Cursor:
         # Match JSON_EXTRACT_PATH_TEXT(arg1, 'key1', 'key2', ...)
         pattern = r"JSON_EXTRACT_PATH_TEXT\s*\(\s*([^,]+)\s*,\s*(.+?)\s*\)"
 
-        def replace_func(match):
+        def replace_func(match: re.Match[str]) -> str:
             json_arg = match.group(1)
             keys_str = match.group(2)
 
@@ -256,6 +280,9 @@ class Cursor:
                 )
 
             for expression in expressions:
+                if not isinstance(expression, exp.Expression):
+                    # sqlglot.parse can yield None for an empty statement.
+                    continue
                 self._execute(expression, params)
 
             return self
@@ -270,8 +297,15 @@ class Cursor:
             raise snowflake.connector.errors.ProgrammingError(
                 msg=msg, errno=1003, sqlstate=self._sqlstate
             ) from None
+        except (ValueError, NotImplementedError) as e:
+            # Unsupported-syntax signals raised by the transforms. Surface them as
+            # Snowflake errors so callers (and the server) see a clean failure.
+            self._sqlstate = "0A000"
+            raise snowflake.connector.errors.ProgrammingError(
+                msg=str(e) or type(e).__name__, errno=2, sqlstate=self._sqlstate
+            ) from None
 
-    def _generate_result(self, template: Template | str, **kwargs) -> None:
+    def _generate_result(self, template: Template | str, **kwargs: Any) -> None:
         """
         Generates and executes a fake result set based on the provided template and parameters.
 
@@ -295,7 +329,7 @@ class Cursor:
         self,
         transformed: sqlglot.exp.Expression,
         params: Sequence[Any] | dict[Any, Any] | None = None,
-    ):
+    ) -> None:
         self._arrow_table = None
         self._arrow_table_fetch_index = 0
         self._rowcount = None
@@ -448,7 +482,11 @@ class Cursor:
                 # Snowflake allows rollback or commit even when no transaction is active
                 self._generate_result(SQL_SUCCESS)
             else:
-                raise e
+                raise snowflake.connector.errors.ProgrammingError(
+                    msg=cast(str, e.args[0]).split("\n")[0],
+                    errno=1003,
+                    sqlstate="25000",
+                ) from None
         except duckdb.ConnectionException as e:
             raise snowflake.connector.errors.DatabaseError(
                 msg=e.args[0], errno=250002, sqlstate="08003"
@@ -456,6 +494,16 @@ class Cursor:
         except duckdb.ParserException as e:
             raise snowflake.connector.errors.ProgrammingError(
                 msg=e.args[0], errno=1003, sqlstate="42000"
+            ) from None
+        except duckdb.Error as e:
+            # Catch-all for every other DuckDB failure (ConversionException,
+            # InvalidInputException, OutOfRangeException, ConstraintException, ...).
+            # A raw DuckDB exception escaping here becomes an HTTP 500 in the server,
+            # and the Snowflake connector treats 5xx as retryable - so the statement
+            # is silently re-executed until the network timeout instead of failing.
+            msg = cast(str, e.args[0]).split("\n")[0] if e.args else str(e)
+            raise snowflake.connector.errors.ProgrammingError(
+                msg=msg, errno=1003, sqlstate="42000"
             ) from None
 
         affected_count = None
@@ -487,6 +535,8 @@ class Cursor:
                 self._generate_result(SQL_CREATED_VIEW, name=ident)
             elif cmd == "CREATE TABLE":
                 self._generate_result(SQL_CREATED_TABLE, name=ident)
+            elif cmd == "CREATE FUNCTION":
+                self._generate_result(SQL_CREATED_FUNCTION, name=ident)
             elif cmd == "USE DATABASE":
                 self._sf_conn.use_database(ident)
                 self._generate_result(SQL_SUCCESS)
@@ -538,7 +588,7 @@ class Cursor:
 
         return command, params
 
-    def fetchone(self) -> dict | tuple | None:
+    def fetchone(self) -> dict[str, Any] | tuple[Any, ...] | None:
         result = self.fetchmany(1)
         return result[0] if result else None
 
@@ -563,7 +613,7 @@ class Cursor:
         else:
             return [tuple(d.values()) for d in tslice]  # Convert dictionaries to tuples
 
-    def fetchall(self) -> list[tuple] | list[dict]:
+    def fetchall(self) -> list[tuple[Any, ...]] | list[dict[str, Any]]:
         if self._arrow_table is None:
             raise TypeError("No open result set")
         # Fetch everything remaining from the current index

@@ -72,7 +72,7 @@ def type_code_to_name(type_code: int | str | type) -> str:
     return "TEXT"
 
 
-def build_row_type(description: list) -> list[dict[str, Any]]:
+def build_row_type(description: list[Any]) -> list[dict[str, Any]]:
     """Build row type metadata from cursor description.
 
     Converts DuckDB/snowduck cursor description to Snowflake-compatible

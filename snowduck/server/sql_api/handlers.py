@@ -448,12 +448,12 @@ async def get_query_history(request: "Request") -> "JSONResponse":
 # =============================================================================
 
 
-def _convert_bindings(bindings: dict) -> tuple | None:
+def _convert_bindings(bindings: dict[str, Any]) -> tuple[Any, ...] | None:
     """Convert binding parameters to tuple for SQL execution.
 
     Format: {"1":{"type":"FIXED","value":"123"}, "2":{"type":"TEXT","value":"hello"}}
     """
-    bind_values = []
+    bind_values: list[Any] = []
     for key in sorted(bindings.keys(), key=lambda x: int(x)):
         binding = bindings[key]
         value = binding.get("value")
@@ -474,7 +474,9 @@ def _convert_bindings(bindings: dict) -> tuple | None:
     return tuple(bind_values)
 
 
-def _build_result_metadata(description: list, rows: list, stmt: Any) -> dict:
+def _build_result_metadata(
+    description: list[Any], rows: list[Any], stmt: Any
+) -> dict[str, Any]:
     """Build result set metadata."""
     row_type = build_row_type(description) if description else []
     partition_count = stmt.get_partition_count()
@@ -492,7 +494,7 @@ def _build_result_metadata(description: list, rows: list, stmt: Any) -> dict:
     }
 
 
-def _collect_dml_stats(sql: str, cursor: Any) -> dict | None:
+def _collect_dml_stats(sql: str, cursor: Any) -> dict[str, Any] | None:
     """Collect DML operation statistics."""
     if not hasattr(cursor, "rowcount") or cursor.rowcount < 0:
         return None
@@ -510,7 +512,7 @@ def _collect_dml_stats(sql: str, cursor: Any) -> dict | None:
     return None
 
 
-def _build_link_headers(stmt: Any) -> dict:
+def _build_link_headers(stmt: Any) -> dict[str, str]:
     """Build Link headers for partitioned results."""
     partition_count = stmt.get_partition_count()
     if partition_count <= 1:
@@ -526,7 +528,7 @@ def _build_link_headers(stmt: Any) -> dict:
     return {"Link": ", ".join(links)}
 
 
-def _build_partition_headers(stmt: Any, partition: int) -> dict:
+def _build_partition_headers(stmt: Any, partition: int) -> dict[str, str]:
     """Build Link headers for a specific partition."""
     partition_count = stmt.get_partition_count()
     if partition_count <= 1:

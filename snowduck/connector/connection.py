@@ -210,4 +210,4 @@ class Connection:
         """
         Returns the parameter style used by the connection.
         """
-        return self._paramstyle
+        return str(self._paramstyle)

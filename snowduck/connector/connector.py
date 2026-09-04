@@ -1,4 +1,7 @@
+from typing import Any
+
 import duckdb
+from duckdb import DuckDBPyConnection
 
 from ..info_schema import InfoSchemaManager
 from ..macros import register_macros
@@ -20,7 +23,9 @@ class Connector:
 
         # Create a shared DuckDB connection for all connections within this Connector
         # This matches Snowflake behavior where connections in the same session share state
-        self._duck_conn = duckdb.connect(database=self._db_file)
+        self._duck_conn: DuckDBPyConnection | None = duckdb.connect(
+            database=self._db_file
+        )
         self._duck_conn.execute(f"SET GLOBAL TimeZone = '{self._timezone}'")
 
         # Register Snowflake-compatible macros once
@@ -29,13 +34,21 @@ class Connector:
         # Create shared InfoSchemaManager
         self._info_schema_manager = InfoSchemaManager(duck_conn=self._duck_conn)
 
-    def connect(self, database: str | None = None, schema: str | None = None, **kwargs):
+    def connect(
+        self,
+        database: str | None = None,
+        schema: str | None = None,
+        **kwargs: Any,
+    ) -> Connection:
         """
         Create a new connection that shares the underlying DuckDB instance.
 
         All connections within the same Connector share database state,
         matching Snowflake's session behavior.
         """
+        if self._duck_conn is None:
+            raise RuntimeError("Connector is closed")
+
         return Connection(
             duck_conn=self._duck_conn,
             info_schema_manager=self._info_schema_manager,

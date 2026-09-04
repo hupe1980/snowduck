@@ -16,5 +16,6 @@ Welcome to the SnowDuck documentation. This guide covers everything you need to 
 - [Quick Start](quickstart) - Your first SnowDuck query
 - [Testing](testing) - Using SnowDuck in your test suite
 - [Functions](functions) - Supported Snowflake functions
+- [Snowflake Semantics](snowflake-semantics) - Behaviours that differ from a naive translation
 - [REST API](rest-api) - Using the REST API server
 - [dbt Integration](dbt) - Using with dbt-snowflake

@@ -1,10 +1,13 @@
 import re
-from typing import Optional, TypedDict
+from collections.abc import Sequence
+from typing import Any, Optional, TypedDict, cast
 
 from snowflake.connector.cursor import ResultMetadata
 
 
-def convert_dbapi_description_to_describe(description):
+def convert_dbapi_description_to_describe(
+    description: Sequence[Sequence[Any]],
+) -> list[tuple[Any, ...]]:
     type_mapping = {
         "STRING": "VARCHAR",
         "BIGINT": "FIXED",
@@ -187,6 +190,6 @@ def describe_as_result_metadata(
         list[ResultMetadata]: A list of Snowflake result metadata.
     """
     return [
-        ResultMetadata.from_column(c)
+        ResultMetadata.from_column(cast(dict[str, Any], c))
         for c in describe_as_rowtype(describe_results, database, schema, table)
-    ]  # pyright: ignore[reportArgumentType]
+    ]

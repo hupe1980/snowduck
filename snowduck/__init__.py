@@ -1,9 +1,11 @@
+from typing import Any
+
 from .decorators import mock_snowflake
 from .patch import patch_snowflake, start_patch_snowflake, stop_patch_snowflake
 
 
 # Lazy import for seeding (requires pandas)
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "seed_table":
         from .seeding import seed_table
 

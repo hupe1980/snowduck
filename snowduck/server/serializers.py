@@ -23,7 +23,7 @@ def serialize_item(item: Any) -> Any:
     return item
 
 
-def serialize_rowset(rows: List[tuple]) -> List[List[Any]]:
+def serialize_rowset(rows: List[tuple[Any, ...]]) -> List[List[Any]]:
     """
     Converts a list of row tuples (from Cursor.fetchall) into a list of list
     structures for Snowflake JSON response.

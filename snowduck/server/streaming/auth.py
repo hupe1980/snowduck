@@ -16,7 +16,7 @@ from collections import OrderedDict
 from typing import Any
 
 
-class LRUTokenCache(OrderedDict):
+class LRUTokenCache(OrderedDict[str, Any]):
     """LRU cache for scoped authentication tokens.
 
     Limits memory usage by evicting oldest tokens when capacity is reached.

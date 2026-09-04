@@ -1,21 +1,23 @@
 import atexit
 import uuid
+from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
+from typing import Any
 from unittest.mock import patch as mock_patch
 
 from .connector import Connector
 
-_patch_ctx = None  # Global variable to track context
+_patch_ctx: Any = None  # Global variable to track context
 
 
 def write_pandas(
-    conn,
-    df,
+    conn: Any,
+    df: Any,
     table_name: str,
     database: str | None = None,
     schema: str | None = None,
-    **_kwargs,
-):
+    **_kwargs: Any,
+) -> tuple[bool, int, int, Any]:
     """
     Minimal Snowflake write_pandas replacement using DuckDB insertion.
 
@@ -64,7 +66,7 @@ def write_pandas(
 
 
 @contextmanager
-def patch_snowflake(db_file: str = ":memory:", reset: bool = False):
+def patch_snowflake(db_file: str = ":memory:", reset: bool = False) -> Iterator[Any]:
     """
     Context manager to patch Snowflake-related functionality with SnowDuck.
 
@@ -99,7 +101,7 @@ def patch_snowflake(db_file: str = ":memory:", reset: bool = False):
             connector.close()
 
 
-def start_patch_snowflake(db_file: str = ":memory:", reset: bool = False):
+def start_patch_snowflake(db_file: str = ":memory:", reset: bool = False) -> Any:
     """
     Start the Snowflake patching context and register cleanup.
 
@@ -131,7 +133,7 @@ def start_patch_snowflake(db_file: str = ":memory:", reset: bool = False):
     atexit.register(stop_patch_snowflake)  # Register cleanup when starting
 
 
-def stop_patch_snowflake():
+def stop_patch_snowflake() -> None:
     """Stop the Snowflake patching context."""
     global _patch_ctx
     if _patch_ctx:

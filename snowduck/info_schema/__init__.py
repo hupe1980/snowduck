@@ -1,4 +1,5 @@
-from .manager import InfoSchemaManager, load_sql
+from ..helper import load_sql
+from .manager import InfoSchemaManager
 
 __all__ = [
     "InfoSchemaManager",

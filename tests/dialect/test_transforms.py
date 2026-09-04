@@ -3,9 +3,7 @@ from sqlglot import parse_one
 from snowduck.dialect.transforms import (
     transform_copy,
     transform_create,
-    transform_current_session_info,
     transform_describe,
-    transform_lateral,
     transform_show,
     transform_use,
 )
@@ -59,57 +57,70 @@ def test_show_objects_transformation(dialect_context):
     )
 
 
-def test_transform_current_session_info(dialect_context):
-    # Input SQL
-    input_sql = """
-    SELECT 
-        CURRENT_ROLE() AS ROLE, 
-        CURRENT_SECONDARY_ROLES() AS SECONDARY_ROLES, 
-        CURRENT_DATABASE() AS DATABASE, 
-        CURRENT_SCHEMA() AS SCHEMA, 
-        CURRENT_WAREHOUSE() AS WAREHOUSE
+def test_session_info_substituted_in_place(conn):
+    """Session functions are replaced without disturbing the rest of the query.
+
+    They used to be rewritten by re-rendering the whole SELECT as a string,
+    which dropped everything after the projection list - so this query
+    silently counted one row instead of three.
     """
+    with conn.cursor() as cur:
+        cur.execute("CREATE OR REPLACE TABLE sess_t (a INT)")
+        cur.execute("INSERT INTO sess_t VALUES (1), (2), (3)")
 
-    # Expected transformed SQL
-    expected_sql = """
-    SELECT 'test_role' AS ROLE, '{"roles": "", "value": "ALL"}' AS SECONDARY_ROLES, 'test_db' AS DATABASE, 'test_schema' AS SCHEMA, 'test_warehouse' AS WAREHOUSE
-    """
+        cur.execute("SELECT CURRENT_DATABASE(), COUNT(*) FROM sess_t")
+        assert cur.fetchone()[1] == 3
 
-    # Parse the input SQL into an expression
-    expression = parse_one(input_sql)
-
-    # Transform the expression
-    transformed_sql = transform_current_session_info(expression, dialect_context)
-
-    # Assert the transformed SQL matches the expected SQL
-    assert transformed_sql.strip() == expected_sql.strip()
+        cur.execute("SELECT CURRENT_ROLE(), a FROM sess_t WHERE a > 1 ORDER BY a")
+        assert [row[1] for row in cur.fetchall()] == [2, 3]
 
 
-def test_transform_current_session_info_without_alias(dialect_context):
-    input_sql = """
-    SELECT CURRENT_ROLE(), CURRENT_DATABASE(), CURRENT_SCHEMA(), CURRENT_WAREHOUSE()
-    """
+def test_session_info_values(dialect_context):
+    """CURRENT_* resolve to the session's configured values."""
+    from snowduck.dialect import Dialect
 
-    expected_sql = """
-    SELECT 'test_role', 'test_db', 'test_schema', 'test_warehouse'
-    """
-
-    expression = parse_one(input_sql)
-    transformed_sql = transform_current_session_info(expression, dialect_context)
-
-    assert transformed_sql.strip() == expected_sql.strip()
-
-
-def test_transform_lateral_flatten(dialect_context):
-    expression = parse_one(
-        "SELECT value FROM LATERAL FLATTEN(input => ARRAY_CONSTRUCT(1,2))",
+    dialect = Dialect(context=dialect_context)
+    sql = parse_one(
+        "SELECT CURRENT_ROLE() AS ROLE, CURRENT_DATABASE() AS DATABASE, "
+        "CURRENT_SCHEMA() AS SCHEMA, CURRENT_WAREHOUSE() AS WAREHOUSE",
         read="snowflake",
-    )
-    lateral = expression.args["from"].this
-    transformed_sql = transform_lateral(lateral, context=dialect_context)
+    ).sql(dialect=dialect)
 
-    assert "UNNEST" in transformed_sql
-    assert "1" in transformed_sql and "2" in transformed_sql
+    assert "'test_role' AS ROLE" in sql
+    assert "'test_db' AS DATABASE" in sql
+    assert "'test_schema' AS SCHEMA" in sql
+    assert "'test_warehouse' AS WAREHOUSE" in sql
+
+
+def test_session_info_default_column_names(dialect_context):
+    """An unaliased session function keeps Snowflake's column name."""
+    from snowduck.dialect import Dialect
+
+    dialect = Dialect(context=dialect_context)
+    sql = parse_one("SELECT CURRENT_ROLE()", read="snowflake").sql(dialect=dialect)
+    assert sql == "SELECT 'test_role' AS \"CURRENT_ROLE()\""
+
+
+def test_transform_lateral_flatten(conn):
+    """LATERAL FLATTEN unnests the input, one row per element."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT value FROM LATERAL FLATTEN(input => ARRAY_CONSTRUCT(1, 2, 3)) "
+            "ORDER BY value"
+        )
+        assert [row[0] for row in cur.fetchall()] == [1, 2, 3]
+
+
+def test_lateral_flatten_over_a_column(conn):
+    """FLATTEN over a stored ARRAY column, which SnowDuck models as JSON."""
+    with conn.cursor() as cur:
+        cur.execute("CREATE OR REPLACE TABLE flat_t (id INT, tags ARRAY)")
+        cur.execute("INSERT INTO flat_t VALUES (1, [10, 20])")
+        cur.execute(
+            "SELECT f.value FROM flat_t, LATERAL FLATTEN(input => flat_t.tags) f "
+            "ORDER BY 1"
+        )
+        assert [str(row[0]) for row in cur.fetchall()] == ["10", "20"]
 
 
 def test_transform_copy_into(dialect_context, monkeypatch):

@@ -128,3 +128,48 @@ def test_binding_pyformat(conn: snowflake.connector.SnowflakeConnection):
         # cur.execute("select * from customers")
         cur.execute("select * from identifier('customers')")
         assert cur.fetchall() == [(1, "Jenny", True), (2, "Jasper", False)]
+
+
+def test_unmapped_duckdb_error_becomes_programming_error(
+    cursor: snowflake.connector.cursor.SnowflakeCursor,
+):
+    """Every DuckDB failure must surface as a Snowflake error.
+
+    A raw DuckDB exception escaping the cursor becomes an HTTP 500 in the
+    server, which the Snowflake connector retries - turning a clear failure
+    into a hang.
+    """
+    with pytest.raises(snowflake.connector.errors.ProgrammingError):
+        cursor.execute("SELECT TO_NUMBER('abc', 10, 2)")
+
+    with pytest.raises(snowflake.connector.errors.ProgrammingError):
+        cursor.execute("SELECT REGEXP_EXTRACT('a', 'a', 0, 'zzz')")
+
+
+def test_unsupported_syntax_becomes_programming_error(
+    cursor: snowflake.connector.cursor.SnowflakeCursor,
+):
+    with pytest.raises(snowflake.connector.errors.ProgrammingError) as exc:
+        cursor.execute(
+            "CREATE FUNCTION js_fn(a FLOAT) RETURNS FLOAT "
+            "LANGUAGE JAVASCRIPT AS $$ return a $$"
+        )
+
+    assert cursor.sqlstate == "0A000"
+    assert "JAVASCRIPT" in str(exc.value)
+
+
+def test_description_reports_nullability(
+    cursor: snowflake.connector.cursor.SnowflakeCursor,
+):
+    """NOT NULL columns must be reported as such in cursor.description.
+
+    Inference used to look the table up in DuckDB's "main" schema rather than
+    the session's, so every column came back nullable.
+    """
+    cursor.execute("CREATE OR REPLACE TABLE nullability_t (a INT NOT NULL, b INT)")
+    cursor.execute("INSERT INTO nullability_t VALUES (1, NULL)")
+    cursor.execute("SELECT a, b FROM nullability_t")
+
+    nullable = {column.name: column.is_nullable for column in cursor.description}
+    assert nullable == {"a": False, "b": True}

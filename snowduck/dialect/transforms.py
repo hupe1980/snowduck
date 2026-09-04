@@ -1,6 +1,7 @@
-import json
 import os
+from typing import cast
 
+import sqlglot
 from sqlglot import exp
 
 from .context import DialectContext
@@ -44,9 +45,122 @@ def transform_set(expression: exp.Expression, context: DialectContext) -> str:
     return ""
 
 
+def transform_function(expression: exp.Create, context: DialectContext) -> str:
+    """Transform a Snowflake SQL UDF into a DuckDB macro.
+
+    Snowflake:
+        CREATE OR REPLACE FUNCTION f(a VARCHAR) RETURNS BOOLEAN AS $$ LENGTH(a) = 11 $$
+    DuckDB:
+        CREATE OR REPLACE MACRO f(a) AS (LENGTH(a) = 11)
+
+    The body arrives as a RawString/Literal. Without this transform the DuckDB
+    generator emits it as a *string literal*, so DuckDB creates a macro that
+    returns the function's own source text instead of evaluating it - silently,
+    with no error at either DDL or call time.
+    """
+    from .dialect import Dialect
+
+    udf = expression.this
+    if not isinstance(udf, exp.UserDefinedFunction):
+        raise ValueError(
+            "CREATE FUNCTION without a function signature is not supported"
+        )
+
+    # Only SQL UDFs can be expressed as DuckDB macros. Fail loudly for the rest
+    # rather than emitting something that silently returns the wrong thing.
+    properties = expression.args.get("properties")
+    for prop in properties.expressions if properties else []:
+        if isinstance(prop, exp.LanguageProperty):
+            language = (
+                prop.this.name
+                if isinstance(prop.this, exp.Expression)
+                else str(prop.this)
+            )
+            if language.upper() != "SQL":
+                raise ValueError(
+                    f"CREATE FUNCTION ... LANGUAGE {language.upper()} is not supported; "
+                    "only SQL UDFs can be emulated (as DuckDB macros)"
+                )
+
+    body = expression.expression
+    if body is None:
+        raise ValueError("CREATE FUNCTION without a body is not supported")
+
+    # RawString ($$ ... $$) and Literal (' ... ') both carry the body as text.
+    if isinstance(body, (exp.RawString, exp.Literal)):
+        body_sql = body.this
+    else:
+        body_sql = body.sql(dialect="snowflake")
+
+    parsed_body = sqlglot.parse_one(body_sql, read="snowflake")
+    # Translate the body through the full SnowDuck pipeline so Snowflake
+    # functions used inside the UDF (TO_NUMBER, REGEXP_SUBSTR, ...) are mapped too.
+    translated_body = parsed_body.sql(dialect=Dialect(context=context))
+
+    params = ", ".join(
+        param.name if isinstance(param, exp.ColumnDef) else param.sql(dialect="duckdb")
+        for param in udf.expressions or []
+    )
+
+    name = (
+        udf.this.sql(dialect="duckdb")
+        if isinstance(udf.this, exp.Expression)
+        else str(udf.this)
+    )
+    or_replace = "OR REPLACE " if expression.args.get("replace") else ""
+    if_not_exists = "IF NOT EXISTS " if expression.args.get("exists") else ""
+
+    # A body that is a full query becomes a DuckDB table macro.
+    as_clause = (
+        f"TABLE ({translated_body})"
+        if isinstance(parsed_body, (exp.Select, exp.Union, exp.Subquery))
+        else f"({translated_body})"
+    )
+
+    return f"CREATE {or_replace}MACRO {if_not_exists}{name}({params}) AS {as_clause}"
+
+
+def transform_clone(
+    expression: exp.Create, clone: exp.Expression, context: DialectContext
+) -> str:
+    """CREATE TABLE <new> CLONE <source> -> a CTAS copy.
+
+    Snowflake's clone is zero-copy and metadata-only; an eager copy is the
+    closest local equivalent and behaves identically for reads and writes.
+    """
+    target = expression.this
+    source = clone.this if isinstance(clone, exp.Clone) else clone
+    or_replace = "OR REPLACE " if expression.args.get("replace") else ""
+    if_not_exists = "IF NOT EXISTS " if expression.args.get("exists") else ""
+    kind = str(expression.args.get("kind")).upper()
+    return (
+        f"CREATE {or_replace}{kind} {if_not_exists}"
+        f"{target.sql(dialect='duckdb')} AS SELECT * FROM {source.sql(dialect='duckdb')}"
+    )
+
+
+def transform_stage(expression: exp.Create, context: DialectContext) -> str:
+    """CREATE STAGE makes the local directory that PUT and COPY INTO use."""
+    ident = expression.find(exp.Identifier)
+    name = (ident.this if ident.quoted else ident.this.upper()) if ident else "STAGE"
+    stage_root = os.getenv("SNOWDUCK_STAGE_DIR", "/tmp/snowduck_stage")
+    os.makedirs(os.path.join(stage_root, name), exist_ok=True)
+    return f"SELECT 'Stage area {name} successfully created.' AS status"
+
+
 def transform_create(expression: exp.Create, context: DialectContext) -> str:
     """Custom transformation for CREATE DATABASE/SCHEMA to use uppercase identifiers."""
     kind = str(expression.args.get("kind")).upper()
+
+    if kind == "FUNCTION":
+        return transform_function(expression, context)
+
+    if kind == "STAGE":
+        return transform_stage(expression, context)
+
+    clone = expression.args.get("clone")
+    if clone is not None:
+        return transform_clone(expression, clone, context)
 
     if kind == "DATABASE":
         ident = expression.find(exp.Identifier)
@@ -159,17 +273,45 @@ def transform_show(expression: exp.Show, context: DialectContext) -> str:
             database=database, schema=schema
         )
 
+    if isinstance(expression.this, str) and expression.this.upper() == "COLUMNS":
+        database = context.current_database or ""
+        schema = context.current_schema or ""
+        table = ""
+        scope = expression.args.get("scope")
+        if isinstance(scope, exp.Table):
+            table = scope.name
+            if isinstance(scope.args.get("db"), exp.Identifier):
+                schema = scope.args["db"].name
+            if isinstance(scope.args.get("catalog"), exp.Identifier):
+                database = scope.args["catalog"].name
+        return context.info_schema_manager.show_columns_sql(
+            database=database, schema=schema, table=table
+        )
+
     return expression.sql(dialect="duckdb")
+
+
+def flatten_input_sql(
+    expression: exp.Expression | None, dialect: str = "duckdb"
+) -> str:
+    """SQL for a FLATTEN input. The JSON[] cast is applied during preprocessing."""
+    if expression is None:
+        return "NULL"
+    return expression.sql(dialect=dialect)
+
+
+def _explode_input(explode: exp.Expression) -> exp.Expression | None:
+    """The `input =>` argument of a FLATTEN call."""
+    kwarg = explode.args.get("this")
+    if isinstance(kwarg, exp.Kwarg):
+        return cast(exp.Expression, kwarg.expression)
+    return kwarg if isinstance(kwarg, exp.Expression) else None
 
 
 def transform_lateral(expression: exp.Lateral, context: DialectContext) -> str:
     """Transform LATERAL FLATTEN/EXPLODE into DuckDB UNNEST."""
     if isinstance(expression.this, exp.Explode):
-        kwarg = expression.this.args.get("this")
-        input_expr = kwarg.expression if isinstance(kwarg, exp.Kwarg) else kwarg
-        input_sql = (
-            input_expr.sql(dialect="duckdb") if input_expr is not None else "NULL"
-        )
+        input_sql = flatten_input_sql(_explode_input(expression.this))
 
         alias = expression.args.get("alias")
         alias_name = (
@@ -178,6 +320,35 @@ def transform_lateral(expression: exp.Lateral, context: DialectContext) -> str:
         return f"LATERAL UNNEST({input_sql}) AS {alias_name}(VALUE)"
 
     return expression.sql(dialect="duckdb")
+
+
+def transform_table_from_rows(
+    expression: exp.TableFromRows, context: DialectContext
+) -> str:
+    """Transform Snowflake's `TABLE(<table function>)` in a FROM clause.
+
+    Snowflake wraps every table function call in `TABLE(...)`; DuckDB calls the
+    function directly. FLATTEN and SPLIT_TO_TABLE additionally have no DuckDB
+    counterpart and become UNNEST.
+    """
+    inner = expression.this
+    alias = expression.args.get("alias")
+    alias_sql = f" AS {alias.sql(dialect='duckdb')}" if alias else ""
+
+    if isinstance(inner, exp.Explode):
+        return f"UNNEST({flatten_input_sql(_explode_input(inner))}){alias_sql or ' AS _flattened(VALUE)'}"
+
+    if isinstance(inner, exp.Anonymous) and isinstance(inner.this, str):
+        name = inner.this.upper()
+        if name in ("SPLIT_TO_TABLE", "STRTOK_SPLIT_TO_TABLE"):
+            args = list(inner.expressions)
+            if len(args) >= 2:
+                subject = args[0].sql(dialect="duckdb")
+                delim = args[1].sql(dialect="duckdb")
+                split = f"str_split({subject}, {delim})"
+                return f"UNNEST({split}){alias_sql or ' AS _split(VALUE)'}"
+
+    return f"{inner.sql(dialect='duckdb')}{alias_sql}"
 
 
 def transform_copy(expression: exp.Copy, context: DialectContext) -> str:
@@ -204,99 +375,3 @@ def transform_copy(expression: exp.Copy, context: DialectContext) -> str:
     source_path = f"{local_stage}/{stage_path}"
 
     return f"COPY {table_sql} FROM '{source_path}'"
-
-
-def transform_current_session_info(
-    expression: exp.Select, context: DialectContext
-) -> str:
-    """Transform session-related functions to DuckDB-compatible SQL. Returns original SQL if no transformations occur."""
-    transformed = False
-    select_expressions = []
-
-    for projection in expression.expressions:
-        transformed_expr = None
-        alias_name = None
-        expr = projection
-
-        # Handle cases where projection is an Alias with a Func or special current_* expressions
-        if isinstance(projection, exp.Alias):
-            expr = projection.this
-            alias_name = projection.alias
-            if alias_name is None:
-                alias_sql = None
-            elif isinstance(alias_name, str):
-                alias_sql = alias_name
-            else:
-                alias_sql = alias_name.sql(dialect="duckdb")
-            current_database_cls = getattr(exp, "CurrentDatabase", None)
-            current_schema_cls = getattr(exp, "CurrentSchema", None)
-            if current_database_cls and isinstance(expr, current_database_cls):
-                database = context.current_database or ""
-                target_alias = alias_sql or "DATABASE"
-                transformed_expr = f"'{database}' AS {target_alias}"
-            elif current_schema_cls and isinstance(expr, current_schema_cls):
-                schema = context.current_schema or ""
-                target_alias = alias_sql or "SCHEMA"
-                transformed_expr = f"'{schema}' AS {target_alias}"
-            elif isinstance(expr, exp.Func):
-                func_name = expr.name.upper()
-
-                if func_name == "CURRENT_ROLE":
-                    role = context.current_role or "SYSADMIN"
-                    target_alias = alias_sql or "ROLE"
-                    transformed_expr = f"'{role}' AS {target_alias}"
-                elif func_name == "CURRENT_SECONDARY_ROLES":
-                    roles_json = json.dumps({"roles": "", "value": "ALL"})
-                    target_alias = alias_sql or "SECONDARY_ROLES"
-                    transformed_expr = f"'{roles_json}' AS {target_alias}"
-                elif func_name == "CURRENT_DATABASE":
-                    database = context.current_database or ""
-                    target_alias = alias_sql or "DATABASE"
-                    transformed_expr = f"'{database}' AS {target_alias}"
-                elif func_name == "CURRENT_SCHEMA":
-                    schema = context.current_schema or ""
-                    target_alias = alias_sql or "SCHEMA"
-                    transformed_expr = f"'{schema}' AS {target_alias}"
-                elif func_name == "CURRENT_WAREHOUSE":
-                    warehouse = context.current_warehouse or "DEFAULT_WAREHOUSE"
-                    target_alias = alias_sql or "WAREHOUSE"
-                    transformed_expr = f"'{warehouse}' AS {target_alias}"
-        else:
-            current_database_cls = getattr(exp, "CurrentDatabase", None)
-            current_schema_cls = getattr(exp, "CurrentSchema", None)
-            if current_database_cls and isinstance(expr, current_database_cls):
-                database = context.current_database or ""
-                transformed_expr = f"'{database}'"
-            elif current_schema_cls and isinstance(expr, current_schema_cls):
-                schema = context.current_schema or ""
-                transformed_expr = f"'{schema}'"
-            elif isinstance(expr, exp.Func):
-                func_name = expr.name.upper()
-                if func_name == "CURRENT_ROLE":
-                    role = context.current_role or "SYSADMIN"
-                    transformed_expr = f"'{role}'"
-                elif func_name == "CURRENT_SECONDARY_ROLES":
-                    roles_json = json.dumps({"roles": "", "value": "ALL"})
-                    transformed_expr = f"'{roles_json}'"
-                elif func_name == "CURRENT_DATABASE":
-                    database = context.current_database or ""
-                    transformed_expr = f"'{database}'"
-                elif func_name == "CURRENT_SCHEMA":
-                    schema = context.current_schema or ""
-                    transformed_expr = f"'{schema}'"
-                elif func_name == "CURRENT_WAREHOUSE":
-                    warehouse = context.current_warehouse or "DEFAULT_WAREHOUSE"
-                    transformed_expr = f"'{warehouse}'"
-
-        # Add transformed expression or fallback to DuckDB SQL
-        if transformed_expr:
-            transformed = True
-            select_expressions.append(transformed_expr)
-        else:
-            select_expressions.append(projection.sql(dialect="duckdb"))
-
-    # Return original SQL if no transformation occurred
-    if not transformed:
-        return expression.sql(dialect="duckdb")
-
-    return f"SELECT {', '.join(select_expressions)}"

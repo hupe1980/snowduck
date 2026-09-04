@@ -1,5 +1,8 @@
 """Identifier and OBJECT/ARRAY_CONSTRUCT preprocessing."""
 
+from typing import cast
+
+import sqlglot
 from sqlglot import exp
 
 from ..context import DialectContext
@@ -20,6 +23,63 @@ def preprocess_identifier(
         expression = exp.Identifier(this=expression.expressions[0].this, quoted=False)
 
     return expression
+
+
+_OBJECT_CONSTRUCT_TEMPLATE = (
+    "CAST('{' || coalesce(list_aggregate("
+    "list_filter(_PAIRS, x -> x IS NOT NULL), 'string_agg', ','"
+    "), '') || '}' AS JSON)"
+)
+
+
+def _object_construct(args: list[exp.Expression], keep_null: bool) -> exp.Expression:
+    """Build a DuckDB JSON object with Snowflake's NULL semantics.
+
+    OBJECT_CONSTRUCT drops key/value pairs whose value is NULL, while
+    OBJECT_CONSTRUCT_KEEP_NULL retains them as JSON nulls.
+
+    The dropping variant renders each pair as JSON text and filters out the
+    ones whose value is NULL, then splices the survivors together. A merge-patch
+    would be shorter, but RFC 7386 gives null the meaning "delete this key"
+    *recursively* - so a NULL nested inside an object-valued argument would be
+    removed too, where Snowflake only drops at the top level.
+    """
+    obj = exp.Anonymous(this="json_object", expressions=args)
+    if keep_null:
+        return obj
+
+    pairs: list[exp.Expression] = []
+    for index in range(0, len(args) - 1, 2):
+        key, value = args[index], args[index + 1]
+        pair_text = exp.DPipe(
+            this=exp.DPipe(
+                this=exp.Anonymous(this="to_json", expressions=[key]),
+                expression=exp.Literal.string(":"),
+            ),
+            expression=exp.Anonymous(this="to_json", expressions=[value]),
+        )
+        pairs.append(
+            exp.Case(
+                ifs=[
+                    exp.If(
+                        this=exp.Is(this=value.copy(), expression=exp.Null()),
+                        true=exp.Null(),
+                    )
+                ],
+                default=pair_text,
+            )
+        )
+
+    if not pairs:
+        return exp.Cast(this=exp.Literal.string("{}"), to=exp.DataType.build("JSON"))
+
+    tree = cast(
+        exp.Expression, sqlglot.parse_one(_OBJECT_CONSTRUCT_TEMPLATE, read="duckdb")
+    )
+    for node in list(tree.find_all(exp.Column)):
+        if node.name == "_PAIRS":
+            node.replace(exp.Array(expressions=pairs))
+    return tree
 
 
 def preprocess_semi_structured(
@@ -95,8 +155,10 @@ def preprocess_semi_structured(
                 possible = False
                 break
 
-        if possible and new_args:
-            return exp.Anonymous(this="json_object", expressions=new_args)
+        if possible:
+            # An empty OBJECT_CONSTRUCT() is still an (empty) object, not a
+            # DuckDB struct literal - which would not even parse.
+            return _object_construct(new_args, keep_null=False)
 
     # Handle OBJECT_CONSTRUCT(*) parsed as StarMap
     if isinstance(expression, exp.StarMap):
@@ -118,7 +180,9 @@ def preprocess_semi_structured(
                 str_expr = expression.expressions[0]
                 return exp.Cast(this=str_expr, to=exp.DataType.build("JSON"))
         elif fname == "OBJECT_CONSTRUCT":
-            return exp.Anonymous(this="json_object", expressions=expression.expressions)
+            return _object_construct(expression.expressions, keep_null=False)
+        elif fname == "OBJECT_CONSTRUCT_KEEP_NULL":
+            return _object_construct(expression.expressions, keep_null=True)
         elif fname == "GET_PATH":
             # GET_PATH(json, 'path') -> json_extract_string(json, '$.path')
             # json_extract_string returns unquoted strings (unlike json_extract)
@@ -228,30 +292,6 @@ def preprocess_semi_structured(
         if expression.args.get("when"):
             expression.set("when", None)
 
-    # Handle TABLE(FLATTEN/EXPLODE(...)) -> UNNEST for DuckDB
-    # Snowflake: SELECT value FROM TABLE(FLATTEN(INPUT => array))
-    # DuckDB:    SELECT value FROM (SELECT UNNEST(array) AS value)
-    if isinstance(expression, exp.TableFromRows):
-        inner = expression.this
-        if isinstance(inner, exp.Explode):
-            # Extract the array from EXPLODE
-            # Could be direct array or Kwarg(INPUT => array)
-            array_expr = inner.this
-            if isinstance(array_expr, exp.Kwarg):
-                # INPUT => array - extract the array part
-                array_expr = array_expr.expression
-            # Transform to subquery with UNNEST aliased as 'value'
-            # DuckDB: (SELECT UNNEST([1,2,3]) AS value) AS _flatten
-            subquery = exp.Select(
-                expressions=[
-                    exp.Alias(
-                        this=exp.Unnest(expressions=[array_expr]),
-                        alias=exp.Identifier(this="value"),
-                    )
-                ]
-            )
-            return exp.Subquery(this=subquery, alias=exp.Identifier(this="_flatten"))
-
     # Handle ArraySlice - sqlglot parses this as exp.ArraySlice, not Anonymous
     if isinstance(expression, exp.ArraySlice):
         # ARRAY_SLICE(array, start, end) -> list_slice(array, start+1, end+1)
@@ -267,21 +307,5 @@ def preprocess_semi_structured(
             return exp.Anonymous(
                 this="list_slice", expressions=[array, start_plus_1, end_plus_1]
             )
-
-    # Handle Snowflake semi-structured types in DDL -> Convert appropriately
-    # Snowflake: ARRAY, VARIANT, OBJECT are semi-structured types
-    # DuckDB:
-    #   - ARRAY without element type -> INT[] (most common case, arrays of integers)
-    #   - VARIANT -> JSON (flexible container)
-    #   - OBJECT -> JSON (key-value container)
-    if isinstance(expression, exp.DataType):
-        if expression.this == exp.DataType.Type.ARRAY:
-            # Check if it has an element type specified
-            if not expression.expressions:
-                # No element type - use INT[] as default
-                return exp.DataType.build("INT[]")
-        elif expression.this in (exp.DataType.Type.VARIANT, exp.DataType.Type.OBJECT):
-            # Replace with JSON type
-            return exp.DataType.build("JSON")
 
     return expression

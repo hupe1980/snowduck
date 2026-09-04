@@ -1,19 +1,16 @@
 from sqlglot import parse_one
 
 
-def test_object_construct(dialect_context):
-    sql = "SELECT OBJECT_CONSTRUCT('a', 1, 'b', 'test')"
-    expression = parse_one(sql, read="snowflake")
+def test_object_construct(conn):
+    """OBJECT_CONSTRUCT builds a JSON object and drops NULL-valued keys."""
+    import json
 
-    from snowduck.dialect import Dialect
+    with conn.cursor() as cur:
+        cur.execute("SELECT OBJECT_CONSTRUCT('a', 1, 'b', 'test')")
+        assert json.loads(cur.fetchone()[0]) == {"a": 1, "b": "test"}
 
-    dialect = Dialect(context=dialect_context)
-    transpiled = expression.sql(dialect=dialect)
-
-    # DuckDB uses json_object for constructing JSON objects from keys/values
-    # Or struct_pack. Snowflake OBJECT is usually JSON-like in usage.
-    # We prefer json_object('a', 1, 'b', 'test')
-    assert "json_object" in transpiled.lower()
+        cur.execute("SELECT OBJECT_CONSTRUCT('a', 1, 'b', NULL)")
+        assert json.loads(cur.fetchone()[0]) == {"a": 1}
 
 
 def test_array_construct(dialect_context):

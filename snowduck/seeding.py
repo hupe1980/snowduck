@@ -6,9 +6,9 @@ import pandas as pd
 
 
 def seed_table(
-    conn,
+    conn: Any,
     table_name: str,
-    data: pd.DataFrame | dict[str, list] | list[dict[str, Any]],
+    data: pd.DataFrame | dict[str, list[Any]] | list[dict[str, Any]],
     drop_if_exists: bool = True,
 ) -> int:
     """

@@ -6,7 +6,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -36,7 +36,7 @@ class ChannelStatus:
     last_error_timestamp: Optional[str] = None
     snowflake_avg_processing_latency_ms: int = 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON response.
 
         Field names match Snowflake's REST API format (from documentation):
@@ -229,7 +229,7 @@ class ChannelManager:
 
     def get_bulk_status(
         self, database: str, schema: str, pipe: str, channel_names: list[str]
-    ) -> tuple[list[dict], dict[str, dict]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
         """Get status for multiple channels in both SDK formats.
 
         Returns a tuple of:
@@ -240,8 +240,8 @@ class ChannelManager:
         since the SDK looks up by the key it sent.
         """
         with self._lock:
-            channels_list: list[dict] = []
-            channel_statuses: dict[str, dict] = {}
+            channels_list: list[dict[str, Any]] = []
+            channel_statuses: dict[str, dict[str, Any]] = {}
             for name in channel_names:
                 channel = self._get_channel_unlocked(database, schema, pipe, name)
                 if channel:

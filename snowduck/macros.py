@@ -65,10 +65,12 @@ def register_macros(duck_conn: DuckDBPyConnection, database: str | None = None) 
     """
     schema_prefix = f"{database}.main." if database else ""
 
-    for _name, macro_template in _MACRO_DEFINITIONS:
+    for name, macro_template in _MACRO_DEFINITIONS:
+        macro_sql = macro_template.format(schema=schema_prefix)
         try:
-            macro_sql = macro_template.format(schema=schema_prefix)
             duck_conn.execute(macro_sql)
-        except Exception:
-            # Macro may already exist or fail for other reasons - continue
-            pass
+        except Exception as e:
+            # A broken macro definition is a bug in SnowDuck, not a user error.
+            # Swallowing it silently left the function missing at query time
+            # with a misleading "does not exist" error, so surface it here.
+            raise RuntimeError(f"Failed to register the {name} macro: {e}") from e

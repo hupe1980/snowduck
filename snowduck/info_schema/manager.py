@@ -240,6 +240,17 @@ class InfoSchemaManager:
             info_schema_name=self.info_schema_name,
         )
 
+    def show_columns_sql(self, *, database: str, schema: str, table: str = "") -> str:
+        """
+        Returns the SQL for SHOW COLUMNS, optionally narrowed to one table.
+        """
+        return load_sql(
+            self._get_filepath("show_columns.sql"),
+            database=database,
+            schema=schema,
+            table=table,
+        )
+
     def show_objects_sql(self, *, database: str, schema: str) -> str:
         """
         Returns the SQL to show all objects for a schema.

@@ -199,7 +199,7 @@ def test_div0(dialect_context):
 
 
 def test_div0null(dialect_context):
-    """Test DIV0NULL function - returns NULL instead of error on divide by zero."""
+    """DIV0NULL returns 0 when the divisor is 0 or NULL (Snowflake docs)."""
     from snowduck.dialect import Dialect
 
     dialect = Dialect(context=dialect_context)
@@ -210,7 +210,7 @@ def test_div0null(dialect_context):
     transpiled = expression.sql(dialect=dialect)
     res = conn.execute(transpiled).fetchone()
     assert res[0] == 5
-    assert res[1] is None
+    assert res[1] == 0
 
 
 def test_width_bucket(dialect_context):

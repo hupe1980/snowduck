@@ -522,7 +522,7 @@ def test_nullifzero(dialect_context):
 
 
 def test_try_to_number(dialect_context):
-    """Test TRY_TO_NUMBER converts string to number or NULL."""
+    """TRY_TO_NUMBER mirrors TO_NUMBER: NUMBER(38, 0) unless a scale is given."""
     sql = "SELECT TRY_TO_NUMBER('123.45')"
     expression = parse_one(sql, read="snowflake")
 
@@ -533,7 +533,7 @@ def test_try_to_number(dialect_context):
 
     conn = duckdb.connect(":memory:")
     res = conn.execute(transpiled).fetchone()
-    assert res[0] == 123.45
+    assert res[0] == 123
 
 
 def test_try_to_date(dialect_context):
@@ -676,15 +676,16 @@ def test_equal_null(conn):
 
 
 def test_div0null(conn):
-    """Test DIV0NULL returns NULL on divide by zero."""
+    """DIV0NULL returns 0 when the divisor is 0 or NULL (Snowflake docs)."""
     with conn.cursor() as cursor:
         cursor.execute("SELECT DIV0NULL(10, 0)")
-        res = cursor.fetchone()
-        assert res[0] is None
+        assert cursor.fetchone()[0] == 0
+
+        cursor.execute("SELECT DIV0NULL(10, NULL)")
+        assert cursor.fetchone()[0] == 0
 
         cursor.execute("SELECT DIV0NULL(10, 2)")
-        res = cursor.fetchone()
-        assert res[0] == 5
+        assert cursor.fetchone()[0] == 5
 
 
 def test_ratio_to_report(dialect_context):
