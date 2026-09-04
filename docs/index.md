@@ -32,12 +32,15 @@ Run Snowflake SQL locally, powered by DuckDB — lightweight in-memory SQL engin
 | **100+ Snowflake Functions** | ✅ String, Date, Numeric, JSON, Array, Aggregate |
 | **SQL Transpilation** | ✅ Automatic Snowflake → DuckDB translation |
 | **Session Variables** | ✅ SET/UNSET with context persistence |
+| **Session Parameters** | ✅ ALTER SESSION SET/UNSET, read back with SHOW PARAMETERS |
+| **Identifier Case** | ✅ Unquoted names fold to upper case, as in Snowflake |
 | **LATERAL FLATTEN** | ✅ Full support via UNNEST |
 | **QUALIFY Clause** | ✅ Native DuckDB support |
-| **Information Schema** | ✅ Emulated INFORMATION_SCHEMA views |
+| **SHOW Commands** | ✅ Snowflake's column shapes, with TERSE / LIKE / STARTS WITH / LIMIT ... FROM |
+| **Information Schema** | ✅ Per-database Snowflake-shaped INFORMATION_SCHEMA views |
 | **Snowpipe Streaming API** | ✅ Full REST API mock |
 | **SQL REST API** | ✅ `/api/v2/statements` endpoints |
-| **dbt Compatibility** | ✅ Works with dbt-snowflake adapter |
+| **dbt Compatibility** | ✅ Verified end to end against dbt-core 1.12 / dbt-snowflake 1.12 |
 
 ## Getting Started
 

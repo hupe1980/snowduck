@@ -7,7 +7,13 @@ nav_order: 7
 
 # dbt Integration
 
-SnowDuck is fully compatible with dbt-snowflake, allowing you to test dbt models locally without a Snowflake account.
+SnowDuck runs dbt-snowflake locally, so you can build and test dbt models
+without a Snowflake account.
+
+`dbt build`, `dbt snapshot` and `dbt docs generate` are exercised end to end
+against **dbt-core 1.12 / dbt-snowflake 1.12** as part of development, covering
+seeds, view / table / incremental models, snapshots, SQL function models, data
+tests and the catalog.
 
 ## Setup (Recommended: Server Mode)
 
@@ -44,12 +50,19 @@ my_project:
       account: test
       user: test
       password: test
-      host: localhost:8000      # Point to SnowDuck server
+      host: localhost           # Hostname only - the port goes in `port`
+      port: 8000
       protocol: http            # Use HTTP (not HTTPS)
       database: DEV_DB
+      warehouse: WH             # Any name; SnowDuck has no compute to size
       schema: PUBLIC
       threads: 4
 ```
+
+{: .warning }
+> Put the port in `port`, not in `host`. dbt appends `:{{ port }}` to whatever
+> `host` you give it, so `host: localhost:8000` produces
+> `http://localhost:8000:8000` and the connection fails to parse.
 
 ### 4. Run dbt Commands
 
@@ -140,13 +153,22 @@ def test_dbt_test(dbt_server):
 | **Materializations** | | |
 | `view` | ✅ | |
 | `table` | ✅ | |
-| `incremental` | ✅ | Basic support |
+| `incremental` | ✅ | `merge`, `delete+insert` and `append` strategies |
 | `ephemeral` | ✅ | |
+| `snapshot` | ✅ | `timestamp` and `check` strategies |
+| `function` (SQL) | ✅ | dbt 1.12 SQL function models; Python and JavaScript raise a clear error |
+| `dynamic_table` | ❌ | Requires Snowflake's incremental compute |
 | **Operations** | | |
-| MERGE | ✅ | Full support |
-| INSERT | ✅ | |
-| UPDATE | ✅ | |
-| DELETE | ✅ | |
+| MERGE | ✅ | Including dbt's bare-column `WHEN NOT MATCHED ... VALUES` |
+| INSERT / `INSERT OVERWRITE` | ✅ | `INSERT OVERWRITE` backs `dbt seed` |
+| UPDATE / DELETE | ✅ | |
+| **Metadata** | | |
+| Relation listing | ✅ | `SHOW OBJECTS` with pagination (`LIMIT ... FROM`) |
+| Function listing | ✅ | `SHOW USER FUNCTIONS` |
+| Schema listing / existence | ✅ | `SHOW TERSE SCHEMAS`, `INFORMATION_SCHEMA.SCHEMATA` |
+| Column metadata | ✅ | `DESCRIBE TABLE` |
+| `dbt docs generate` | ✅ | Catalog built from `INFORMATION_SCHEMA.TABLES` / `.COLUMNS` |
+| `query_tag` config | ✅ | `ALTER SESSION SET` round-trips through `SHOW PARAMETERS` |
 | **Macros** | | |
 | `{{ ref() }}` | ✅ | |
 | `{{ source() }}` | ✅ | |
@@ -156,6 +178,8 @@ def test_dbt_test(dbt_server):
 | Data tests | ✅ | Custom SQL tests |
 | **Seeds** | | |
 | CSV seed loading | ✅ | |
+| **Grants** | | |
+| `grants` config | ⚠️ | `SHOW GRANTS` returns an empty result; grants are not enforced |
 
 ## Seeding Test Data
 
@@ -348,4 +372,6 @@ dbt run
 > **Performance**: SnowDuck runs dbt models 10-100x faster than cloud Snowflake, making it ideal for rapid iteration during development.
 
 {: .warning }
-> **Limitations**: Some Snowflake-specific features like clustering, time travel, and stored procedures are not supported. Test these in a real Snowflake environment before production.
+> **Limitations**: Clustering, time travel, dynamic tables and stored
+> procedures are not supported. See [Limitations](limitations) for the full
+> list, and test those in a real Snowflake environment before production.

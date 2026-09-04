@@ -27,10 +27,30 @@ These features work identically to Snowflake:
 - ✅ MERGE with qualified SET targets, UPDATE ... FROM, DELETE ... USING
 - ✅ CREATE TABLE ... CLONE / LIKE, TRANSIENT and TEMPORARY tables
 - ✅ GROUP BY ROLLUP / CUBE / GROUPING SETS, PIVOT / UNPIVOT
-- ✅ SHOW DATABASES / SCHEMAS / OBJECTS / TABLES / COLUMNS
+- ✅ `INSERT OVERWRITE INTO` (truncate-and-insert)
 - ✅ LIKE ANY / LIKE ALL
 - ✅ SQL UDFs (`CREATE FUNCTION ... AS $$ ... $$`), scalar and table
 - ✅ Sequences (`seq.NEXTVAL`)
+- ✅ `ALTER SESSION SET`/`UNSET`, read back with `SHOW PARAMETERS`
+
+### Catalog
+
+`SHOW` returns Snowflake's documented column shape for each object type, not
+just the columns SnowDuck can fill. Clients index into those results by name -
+dbt-snowflake selects `database_name, schema_name, name, kind, is_dynamic,
+is_iceberg` out of `SHOW OBJECTS` - so a missing column is a hard failure at the
+client, not a degraded result.
+
+- ✅ SHOW OBJECTS / TABLES / VIEWS / SCHEMAS / DATABASES / COLUMNS
+- ✅ SHOW FUNCTIONS / USER FUNCTIONS / SEQUENCES / STAGES / WAREHOUSES
+- ✅ SHOW PARAMETERS / VARIABLES
+- ✅ `TERSE`, `LIKE '<pattern>'`, `STARTS WITH '<prefix>'`, `LIMIT <n> [ FROM '<name>' ]`
+- ✅ Per-database `INFORMATION_SCHEMA`: DATABASES, SCHEMATA, TABLES, VIEWS,
+  COLUMNS, FUNCTIONS, SEQUENCES
+- ⚠️ Object types with no local equivalent (DYNAMIC TABLES, ICEBERG TABLES,
+  EXTERNAL TABLES, PROCEDURES, STREAMS, TASKS, PIPES, FILE FORMATS, GRANTS,
+  PRIMARY/UNIQUE/IMPORTED KEYS, TRANSACTIONS) return an **empty result with the
+  right columns** rather than an error
 
 ### Data Types
 - ✅ VARCHAR, TEXT, STRING
@@ -52,8 +72,11 @@ These features work identically to Snowflake:
 These features work but with limitations:
 
 ### Information Schema
-- ⚠️ Only commonly-used views are emulated
-- ⚠️ Some columns may have mock values
+- ⚠️ Only the views listed above are emulated; anything else raises a catalog
+  error naming the view
+- ⚠️ Columns Snowflake computes from its own storage layer are mocked:
+  `bytes` is NULL, `row_count` is DuckDB's estimate, `created`/`last_altered`
+  are the epoch, and every owner is `SYSADMIN`
 
 ### ALTER TABLE
 - ⚠️ ADD COLUMN, DROP COLUMN work
@@ -77,7 +100,7 @@ These Snowflake features are **not supported**:
 | Feature | Reason |
 |---------|--------|
 | Time Travel (AT/BEFORE) | Requires Snowflake's versioned storage |
-| CLONE | Zero-copy clone is Snowflake-specific |
+| Zero-copy CLONE | `CLONE` runs, but as an eager copy - see Known Remaining Gaps |
 | Fail-safe | Snowflake infrastructure feature |
 | Data Sharing | Multi-account feature |
 
@@ -132,13 +155,19 @@ Some behaviors differ slightly from Snowflake:
 
 ### Case Sensitivity
 
-```sql
--- Snowflake: Unquoted identifiers are uppercase
--- SnowDuck: Also uppercase by default
+Unquoted identifiers fold to upper case and quoted ones keep their case, as in
+Snowflake:
 
-CREATE TABLE MyTable (id INT);  -- Creates "MYTABLE"
-SELECT * FROM mytable;          -- Works (case-insensitive lookup)
+```sql
+CREATE TABLE MyTable (id INT);    -- creates MYTABLE with column ID
+SELECT * FROM mytable;            -- resolves to MYTABLE
+CREATE TABLE "MixedCase" (x INT); -- creates MixedCase
 ```
+
+The one deviation: a *quoted* identifier still resolves case-insensitively,
+because DuckDB matches identifiers that way. Snowflake would treat
+`SELECT * FROM "mixedcase"` as a different object from `"MixedCase"`; SnowDuck
+finds it.
 
 ### Error Messages
 
@@ -168,6 +197,14 @@ are emulated explicitly and covered by the conformance suite - see
 | `ARRAY` element types | An `ARRAY` column is stored as JSON, so its elements read back as JSON values (`'10'` rather than `10`). Array literals of a single type keep their native types |
 | `CLONE` | An eager copy, not Snowflake's zero-copy clone. Reads and writes behave identically; storage and timing do not |
 | Named `WINDOW` clause | Not supported - and neither is it in Snowflake, whose `OVER` grammar takes only an inline window definition |
+| Quoted identifier lookup | Case-insensitive, where Snowflake is case-sensitive (see above) |
+| `SHOW ... STARTS WITH` | Matched case-insensitively, since identifiers are stored as written |
+| `SHOW USER FUNCTIONS` `arguments` | Reports `VARIANT` for every parameter and return type: a UDF becomes a DuckDB macro, which has no typed signature |
+| `SHOW STAGES` | Lists every directory under `SNOWDUCK_STAGE_DIR`, regardless of which database or schema the stage was created in |
+| `ARRAY` / `OBJECT` / `VARIANT` columns | All three are stored as JSON, so `INFORMATION_SCHEMA.COLUMNS` reports `VARIANT` for all of them |
+| `TEMPORARY` tables and views | A qualified `CREATE TEMPORARY <rel> <db>.<schema>.<name>` becomes a permanent relation: DuckDB keeps temporary objects in its own `temp` catalog and rejects any other qualification |
+| `TRANSIENT` | Accepted and ignored - it only removes Fail-safe, which SnowDuck does not have |
+| `TO_TIME` | Casts only; DuckDB has no `TIMESTAMP WITH TIME ZONE` → `TIME` cast, so a timestamp argument is not supported |
 
 ## Recommendations
 
@@ -185,11 +222,11 @@ are emulated explicitly and covered by the conformance suite - see
 | Component | Supported |
 |-----------|-----------|
 | Python | 3.11 - 3.14 |
-| snowflake-connector-python | 3.17+ |
+| snowflake-connector-python | 3.17+, including 4.x (dbt-snowflake 1.12 requires 4.2+) |
 | DuckDB | 1.2+ |
 | sqlglot | 30.18+ (installed as `sqlglot[c]`) |
 | pyarrow | 18+ (unpinned at the top end; <19 has no cp314 wheels) |
-| dbt-snowflake | 1.9+ (for dbt testing) |
+| dbt-snowflake | 1.12 (verified end to end); 1.9+ expected to work |
 
 {: .note }
 > SnowDuck depends on `sqlglot[c]`, not `sqlglot[rs]`. sqlglot deprecated the

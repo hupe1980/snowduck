@@ -57,6 +57,17 @@ def _single_source_table(select: exp.Select) -> exp.Table | None:
     return source.this
 
 
+def _identifier_name(node: exp.Expression | None) -> str | None:
+    """The bare name of a parameter reference in an ALTER SESSION clause."""
+    if isinstance(node, exp.Column):
+        return node.name
+    if isinstance(node, exp.Identifier):
+        return str(node.this)
+    if isinstance(node, exp.Var):
+        return str(node.this)
+    return None
+
+
 def extract_sql_command(expression: exp.Expression) -> str:
     kind = expression.args.get("kind")
 
@@ -356,11 +367,28 @@ class Cursor:
                 current_warehouse=self._sf_conn.warehouse,
                 info_schema_manager=self._info_schema_manager,
                 session_variables=self._sf_conn._session_variables,
+                session_parameters=self._sf_conn.session_parameters,
             )
         )
 
         replace_drop_sql: str | None = None
-        if isinstance(transformed, exp.Create) and transformed.args.get("replace"):
+        if isinstance(transformed, exp.Insert) and transformed.args.get("overwrite"):
+            # Snowflake's INSERT OVERWRITE INTO empties the table and inserts in
+            # one statement; dbt-snowflake's seed materialization relies on it.
+            # sqlglot's DuckDB generator turns it into Hive's
+            # `INSERT OVERWRITE TABLE`, which DuckDB cannot parse, so the two
+            # halves are issued separately instead.
+            target = transformed.this
+            if isinstance(target, exp.Schema):
+                target = target.this
+            if isinstance(target, exp.Table):
+                replace_drop_sql = f"DELETE FROM {target.sql(dialect=dialect)}"
+                insert_expr = transformed.copy()
+                insert_expr.set("overwrite", False)
+                sql = insert_expr.sql(dialect=dialect)
+            else:
+                sql = Dialect.sql_with_cache(transformed, dialect)
+        elif isinstance(transformed, exp.Create) and transformed.args.get("replace"):
             kind = transformed.args.get("kind")
             if isinstance(kind, str) and kind.upper() == "TABLE":
                 table_expr = transformed.this
@@ -394,6 +422,8 @@ class Cursor:
                 # SET is handled by transform_set which stores in context
                 # sql is already a SELECT statement, execute it
                 pass
+            elif cmd == "ALTER SESSION":
+                self._apply_alter_session(transformed)
             elif cmd == "PUT":
                 put_sql = transformed.sql(dialect="snowflake")
                 match = re.search(r"PUT\s+(\S+)\s+@(\S+)", put_sql, re.IGNORECASE)
@@ -550,6 +580,39 @@ class Cursor:
             affected_count if affected_count is not None else self._arrow_table.num_rows
         )
         self._sfqid = str(uuid.uuid4())
+
+    def _apply_alter_session(self, expression: exp.Expression) -> None:
+        """Record ALTER SESSION SET/UNSET so SHOW PARAMETERS can read it back.
+
+        dbt reads `query_tag` with SHOW PARAMETERS, overwrites it for the
+        duration of a materialization and restores it afterwards; a no-op
+        ALTER SESSION made it restore the wrong value.
+        """
+        for action in expression.args.get("actions") or []:
+            if not isinstance(action, exp.AlterSession):
+                continue
+            unset = bool(action.args.get("unset"))
+            for item in action.expressions:
+                target = item.this if isinstance(item, exp.SetItem) else item
+                if unset:
+                    name = _identifier_name(target)
+                    if name:
+                        self._sf_conn.unset_session_parameter(name)
+                elif isinstance(target, exp.EQ):
+                    name = _identifier_name(target.this)
+                    if not name:
+                        continue
+                    value = target.expression
+                    if isinstance(value, exp.Literal):
+                        self._sf_conn.set_session_parameter(name, str(value.this))
+                    elif isinstance(value, exp.Boolean):
+                        self._sf_conn.set_session_parameter(
+                            name, "true" if value.this else "false"
+                        )
+                    else:
+                        self._sf_conn.set_session_parameter(
+                            name, value.sql(dialect="snowflake")
+                        )
 
     def _rewrite_with_params(
         self,

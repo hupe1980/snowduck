@@ -1,6 +1,6 @@
 [project]
 name = "snowduck"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run Snowflake SQL locally, powered by DuckDB - lightweight in-memory SQL engine for development and testing"
 authors = [
     {name = "hupe1980"}
@@ -13,8 +13,11 @@ requires-python = ">=3.11,<4"
 keywords = ["snowflake", "duckdb", "sql", "testing", "mock", "database", "data-engineering"]
 dependencies = [
     "duckdb (>=1.2.1,<2.0.0)",
-    # 3.17.0 dropped the connector's own pyarrow <19 pin (an Azure Batch workaround).
-    "snowflake-connector-python (>=3.17.0,<4.0.0)",
+    # 3.17.0 dropped the connector's own pyarrow <19 pin (an Azure Batch
+    # workaround). The upper bound has to admit 4.x: dbt-snowflake 1.12 requires
+    # snowflake-connector-python >=4.2, so a <4 pin makes SnowDuck and current
+    # dbt-snowflake uninstallable together.
+    "snowflake-connector-python (>=3.17.0,<5.0.0)",
     # sqlglot[rs] is deprecated; sqlglot[c] is the current accelerator.
     # 30.x ships mypyc-compiled generators, which cannot be subclassed from
     # Python - SnowDuck customises Dialect.generate() instead.
@@ -61,7 +64,7 @@ dev = [
     "uvicorn>=0.34.0",
     "zstandard>=0.23.0",  # Required for SDK InsertRows mode (zstd compression)
     "snowpipe-streaming>=1.1.0",
-    "dbt-snowflake>=1.9.0",  # For dbt compatibility tests
+    "dbt-snowflake>=1.12.0",  # For dbt compatibility tests
 ]
 
 [build-system]

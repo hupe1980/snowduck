@@ -41,25 +41,38 @@ def test_show_columns(conn):
         cur.execute("SHOW COLUMNS IN TABLE sc_t")
         columns = [row[2] for row in cur.fetchall()]
 
-    assert columns == ["id", "label"]
+    # Snowflake folds unquoted identifiers to upper case.
+    assert columns == ["ID", "LABEL"]
 
 
 def test_bare_array_column_is_json(conn):
     """Snowflake ARRAY is untyped; it must not become a typed DuckDB list."""
     with conn.cursor() as cur:
         cur.execute("CREATE OR REPLACE TABLE arr_t (tags ARRAY, o OBJECT, v VARIANT)")
+        # DuckDB stores all three as JSON ...
         cur.execute(
-            "SELECT data_type FROM information_schema.columns "
-            "WHERE table_name = 'arr_t' ORDER BY ordinal_position"
+            "SELECT data_type FROM system.information_schema.columns "
+            "WHERE table_name = 'ARR_T' ORDER BY ordinal_position"
         )
         assert [row[0] for row in cur.fetchall()] == ["JSON", "JSON", "JSON"]
+        # ... and INFORMATION_SCHEMA reports the Snowflake type for them.
+        cur.execute(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_name = 'ARR_T' ORDER BY ordinal_position"
+        )
+        assert [row[0] for row in cur.fetchall()] == ["VARIANT"] * 3
 
 
 def test_explicit_typed_array_is_preserved(conn):
     with conn.cursor() as cur:
         cur.execute("CREATE OR REPLACE TABLE arr_typed (n INT[])")
         cur.execute(
-            "SELECT data_type FROM information_schema.columns "
-            "WHERE table_name = 'arr_typed'"
+            "SELECT data_type FROM system.information_schema.columns "
+            "WHERE table_name = 'ARR_TYPED'"
         )
         assert cur.fetchone()[0] == "INTEGER[]"
+        cur.execute(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_name = 'ARR_TYPED'"
+        )
+        assert cur.fetchone()[0] == "ARRAY"

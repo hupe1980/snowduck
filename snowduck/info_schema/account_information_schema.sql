@@ -1,16 +1,19 @@
 CREATE SCHEMA IF NOT EXISTS {account_catalog_name}.{info_schema_name};
 
--- View to support information_schema.databases queries
+-- INFORMATION_SCHEMA.DATABASES. Account-wide in Snowflake, so it lives in the
+-- account catalog and every database's INFORMATION_SCHEMA.DATABASES maps here.
 CREATE VIEW IF NOT EXISTS {account_catalog_name}.{info_schema_name}._DATABASES AS
 SELECT
-    UPPER(database_name) as database_name,
-    to_timestamp(0)::timestamptz as created_on,
-    'SYSADMIN' as owner,
-    '' as comment,
-    1 as retention_time,
-    'STANDARD' as type
+    database_name AS database_name,
+    'SYSADMIN' AS database_owner,
+    'NO' AS is_transient,
+    comment AS comment,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS created,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS last_altered,
+    1 AS retention_time,
+    'STANDARD' AS type
 FROM duckdb_databases()
-WHERE database_name NOT IN ('memory', '{account_catalog_name}');
+WHERE database_name NOT IN ('memory', 'system', 'temp', '{account_catalog_name}');
 
 CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._tables_ext (
     ext_table_catalog VARCHAR,
@@ -39,30 +42,50 @@ SELECT
     columns.ordinal_position AS ordinal_position,
     columns.column_default AS column_default,
     columns.is_nullable AS is_nullable,
+    -- DuckDB type -> Snowflake type. Snowflake has one integer type (NUMBER)
+    -- and one float type (FLOAT), so every width maps onto those.
     CASE
-        WHEN STARTS_WITH(columns.data_type, 'DECIMAL') OR columns.data_type = 'BIGINT' THEN 'NUMBER'
-        WHEN columns.data_type = 'VARCHAR' THEN 'TEXT'
-        WHEN columns.data_type = 'DOUBLE' THEN 'FLOAT'
-        WHEN columns.data_type = 'BLOB' THEN 'BINARY'
-        WHEN columns.data_type = 'TIMESTAMP' THEN 'TIMESTAMP_NTZ'
-        WHEN columns.data_type = 'TIMESTAMP WITH TIME ZONE' THEN 'TIMESTAMP_TZ'
+        WHEN STARTS_WITH(columns.data_type, 'DECIMAL')
+          OR STARTS_WITH(columns.data_type, 'NUMERIC') THEN 'NUMBER'
+        WHEN columns.data_type IN (
+            'BIGINT', 'INTEGER', 'SMALLINT', 'TINYINT', 'HUGEINT',
+            'UBIGINT', 'UINTEGER', 'USMALLINT', 'UTINYINT', 'UHUGEINT'
+        ) THEN 'NUMBER'
+        WHEN columns.data_type IN ('DOUBLE', 'FLOAT', 'REAL') THEN 'FLOAT'
+        WHEN STARTS_WITH(columns.data_type, 'VARCHAR')
+          OR STARTS_WITH(columns.data_type, 'CHAR')
+          OR columns.data_type IN ('TEXT', 'STRING', 'UUID', 'ENUM') THEN 'TEXT'
+        WHEN columns.data_type IN ('BLOB', 'BYTEA', 'BINARY', 'VARBINARY') THEN 'BINARY'
+        WHEN columns.data_type = 'BOOLEAN' THEN 'BOOLEAN'
+        WHEN columns.data_type = 'DATE' THEN 'DATE'
+        WHEN columns.data_type LIKE 'TIMESTAMP%WITH TIME ZONE' THEN 'TIMESTAMP_TZ'
+        WHEN STARTS_WITH(columns.data_type, 'TIMESTAMP') THEN 'TIMESTAMP_NTZ'
+        WHEN STARTS_WITH(columns.data_type, 'TIME') THEN 'TIME'
         WHEN columns.data_type = 'JSON' THEN 'VARIANT'
+        WHEN ENDS_WITH(columns.data_type, '[]')
+          OR STARTS_WITH(columns.data_type, 'LIST') THEN 'ARRAY'
+        WHEN STARTS_WITH(columns.data_type, 'STRUCT')
+          OR STARTS_WITH(columns.data_type, 'MAP') THEN 'OBJECT'
         ELSE columns.data_type
     END AS data_type,
     ext_character_maximum_length AS character_maximum_length,
     ext_character_octet_length AS character_octet_length,
+    -- Snowflake reports NUMBER(38,0) for every integer width.
     CASE
-        WHEN columns.data_type = 'BIGINT' THEN 38
-        WHEN columns.data_type = 'DOUBLE' THEN NULL
+        WHEN columns.data_type IN (
+            'BIGINT', 'INTEGER', 'SMALLINT', 'TINYINT', 'HUGEINT',
+            'UBIGINT', 'UINTEGER', 'USMALLINT', 'UTINYINT', 'UHUGEINT'
+        ) THEN 38
+        WHEN columns.data_type IN ('DOUBLE', 'FLOAT', 'REAL') THEN NULL
         ELSE columns.numeric_precision
     END AS numeric_precision,
     CASE
-        WHEN columns.data_type = 'BIGINT' THEN 10
-        WHEN columns.data_type = 'DOUBLE' THEN NULL
-        ELSE columns.numeric_precision_radix
+        WHEN columns.data_type IN ('DOUBLE', 'FLOAT', 'REAL') THEN NULL
+        WHEN columns.numeric_precision IS NULL THEN NULL
+        ELSE 10
     END AS numeric_precision_radix,
     CASE
-        WHEN columns.data_type = 'DOUBLE' THEN NULL
+        WHEN columns.data_type IN ('DOUBLE', 'FLOAT', 'REAL') THEN NULL
         ELSE columns.numeric_scale
     END AS numeric_scale,
     collation_name,
@@ -83,7 +106,7 @@ LEFT JOIN duckdb_columns ddb_columns
    AND ddb_columns.schema_name = columns.table_schema
    AND ddb_columns.table_name = columns.table_name
    AND ddb_columns.column_name = columns.column_name
-WHERE schema_name != '{info_schema_name}';
+WHERE columns.table_schema != '{info_schema_name}';
 
 CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._users_ext (
     name VARCHAR,

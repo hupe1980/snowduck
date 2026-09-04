@@ -65,4 +65,4 @@ def test_qualify_clause(dialect_context):
     transpiled = expression.sql(dialect=dialect)
 
     assert "QUALIFY" in transpiled.upper()
-    assert "rn = 1" in transpiled
+    assert "RN = 1" in transpiled

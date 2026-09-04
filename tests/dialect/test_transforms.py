@@ -1,6 +1,7 @@
 from sqlglot import parse_one
 
 from snowduck.dialect.transforms import (
+    transform_command,
     transform_copy,
     transform_create,
     transform_describe,
@@ -33,17 +34,18 @@ def test_use_database_transformation(dialect_context):
 
 
 def test_show_transformation(dialect_context):
+    """SHOW renders a query, not a passthrough of the SHOW statement."""
     expression = parse_one("SHOW DATABASES", read="snowflake")
     transformed_sql = transform_show(expression, context=dialect_context)
-    assert transformed_sql == dialect_context.info_schema_manager.show_databases_sql()
+    assert "SELECT" in transformed_sql
+    assert "duckdb_databases()" in transformed_sql
 
 
 def test_show_schemas_transformation(dialect_context):
     expression = parse_one("SHOW SCHEMAS", read="snowflake")
     transformed_sql = transform_show(expression, context=dialect_context)
-    assert transformed_sql == dialect_context.info_schema_manager.show_schemas_sql(
-        database=dialect_context.current_database,
-    )
+    assert "duckdb_schemas()" in transformed_sql
+    assert "upper(s.database_name) = upper('test_db')" in transformed_sql
 
 
 def test_show_objects_transformation(dialect_context):
@@ -51,10 +53,24 @@ def test_show_objects_transformation(dialect_context):
         "SHOW OBJECTS IN SCHEMA test_db.test_schema", read="snowflake"
     )
     transformed_sql = transform_show(expression, context=dialect_context)
-    assert transformed_sql == dialect_context.info_schema_manager.show_objects_sql(
-        database="test_db",
-        schema="test_schema",
+    assert "upper(o.database_name) = upper('test_db')" in transformed_sql
+    assert "upper(o.schema_name) = upper('test_schema')" in transformed_sql
+
+
+def test_show_user_functions_transformation(dialect_context):
+    """sqlglot parses SHOW USER FUNCTIONS as an opaque Command, not a Show."""
+    expression = parse_one(
+        "SHOW USER FUNCTIONS IN test_db.test_schema", read="snowflake"
     )
+    transformed_sql = transform_command(expression, context=dialect_context)
+    assert "duckdb_functions()" in transformed_sql
+    assert "'is_builtin'" in transformed_sql
+
+
+def test_unknown_command_is_passed_through(dialect_context):
+    """Only SHOW is claimed from the Command fallback."""
+    expression = parse_one("VACUUM", read="snowflake")
+    assert transform_command(expression, context=dialect_context) == "VACUUM"
 
 
 def test_session_info_substituted_in_place(conn):

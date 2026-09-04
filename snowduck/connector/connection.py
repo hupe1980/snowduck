@@ -37,6 +37,10 @@ class Connection:
         self._session_variables: dict[
             str, str
         ] = {}  # Session variables (SET var = value)
+        # Session parameters (ALTER SESSION SET <param> = <value>), keyed upper
+        # case. SHOW PARAMETERS reads these back, which is how dbt saves and
+        # restores query_tag around a materialization.
+        self._session_parameters: dict[str, str] = {}
 
         if database:
             self.use_database(database)
@@ -204,6 +208,17 @@ class Connection:
         except Exception:
             # Database/schema may not be attached/created yet.
             return
+
+    @property
+    def session_parameters(self) -> dict[str, str]:
+        """Session parameters set with ALTER SESSION, keyed upper case."""
+        return self._session_parameters
+
+    def set_session_parameter(self, name: str, value: str) -> None:
+        self._session_parameters[name.upper()] = value
+
+    def unset_session_parameter(self, name: str) -> None:
+        self._session_parameters.pop(name.upper(), None)
 
     @property
     def paramstyle(self) -> str:

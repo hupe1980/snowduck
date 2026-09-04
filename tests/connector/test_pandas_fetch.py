@@ -21,8 +21,8 @@ def test_fetch_pandas_all_basic():
 
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 3
-    assert list(df.columns) == ["id", "name"]
-    assert df["name"].tolist() == ["Alice", "Bob", "Carol"]
+    assert list(df.columns) == ["ID", "NAME"]
+    assert df["NAME"].tolist() == ["Alice", "Bob", "Carol"]
 
 
 @mock_snowflake

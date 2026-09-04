@@ -1,6 +1,7 @@
 """Preprocessing functions for SQL transpilation."""
 
 from .arrays import preprocess_arrays
+from .case_folding import preprocess_case_folding
 from .dates import preprocess_date_functions
 from .functions import preprocess_functions, supported_functions
 from .generators import (
@@ -22,6 +23,7 @@ from .variables import preprocess_variables
 
 __all__ = [
     "preprocess_arrays",
+    "preprocess_case_folding",
     "preprocess_variables",
     "preprocess_identifier",
     "preprocess_semi_structured",

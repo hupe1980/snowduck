@@ -172,4 +172,4 @@ def test_description_reports_nullability(
     cursor.execute("SELECT a, b FROM nullability_t")
 
     nullable = {column.name: column.is_nullable for column in cursor.description}
-    assert nullable == {"a": False, "b": True}
+    assert nullable == {"A": False, "B": True}

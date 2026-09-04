@@ -216,6 +216,40 @@ def _as_type(type_name: str) -> Builder:
     return build
 
 
+def _cast_to(type_name: str, *, safe: bool = False) -> Builder:
+    """TO_<type>(x) / TRY_TO_<type>(x) -> a cast.
+
+    sqlglot's Snowflake parser only models the timestamp variants when the
+    argument is a literal; anything else - `to_timestamp_ntz(convert_timezone(
+    'UTC', current_timestamp()))`, which is how dbt stamps its snapshots -
+    arrives here as an anonymous call.
+    """
+
+    def build(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
+        if not args:
+            return None
+        node = exp.TryCast if safe else exp.Cast
+        return node(this=args[0], to=exp.DataType.build(type_name))
+
+    return build
+
+
+for _name, _target, _safe in (
+    ("TO_TIMESTAMP_NTZ", "TIMESTAMP", False),
+    ("TO_TIMESTAMP_LTZ", "TIMESTAMPTZ", False),
+    ("TO_TIMESTAMP_TZ", "TIMESTAMPTZ", False),
+    ("TRY_TO_TIMESTAMP_NTZ", "TIMESTAMP", True),
+    ("TRY_TO_TIMESTAMP_LTZ", "TIMESTAMPTZ", True),
+    ("TRY_TO_TIMESTAMP_TZ", "TIMESTAMPTZ", True),
+    # TO_TIME only casts; DuckDB has no TIMESTAMPTZ -> TIME cast, so a
+    # timestamp argument is not covered here.
+    ("TO_TIME", "TIME", False),
+    ("TRY_TO_TIME", "TIME", True),
+):
+    _BUILDERS[_name] = _cast_to(_target, safe=_safe)
+    _CATEGORIES[_name] = "Conversion"
+
+
 _BUILDERS["AS_INTEGER"] = _as_type("BIGINT")
 _BUILDERS["AS_DOUBLE"] = _as_type("DOUBLE")
 _BUILDERS["AS_DECIMAL"] = _as_type("DECIMAL(38, 0)")

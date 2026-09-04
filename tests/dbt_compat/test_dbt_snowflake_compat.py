@@ -309,33 +309,29 @@ class TestDBTQueryExecution:
         """dbt queries INFORMATION_SCHEMA for column metadata."""
         cursor = connection.cursor()
         cursor.execute("CREATE TABLE meta_test (id INT, name VARCHAR, active BOOLEAN)")
-        # Note: snowduck stores table names in lowercase
+        # Unquoted identifiers are folded to upper case, as in Snowflake.
         cursor.execute("""
-            SELECT column_name, data_type 
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE table_name = 'meta_test'
+            SELECT column_name, data_type
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE table_name = 'META_TEST'
             ORDER BY ordinal_position
         """)
         results = cursor.fetchall()
         assert len(results) == 3
-        # Column names are lowercase in DuckDB
-        assert results[0][0] == "id"
-        assert results[1][0] == "name"
-        assert results[2][0] == "active"
+        assert [row[0] for row in results] == ["ID", "NAME", "ACTIVE"]
 
     def test_information_schema_tables(self, connection):
         """dbt queries INFORMATION_SCHEMA for table existence."""
         cursor = connection.cursor()
         cursor.execute("CREATE TABLE table_check_test (x INT)")
-        # Note: snowduck stores table names in lowercase
         cursor.execute("""
-            SELECT table_name 
-            FROM INFORMATION_SCHEMA.TABLES 
-            WHERE table_name = 'table_check_test'
+            SELECT table_name
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE table_name = 'TABLE_CHECK_TEST'
         """)
         results = cursor.fetchall()
         assert len(results) == 1
-        assert results[0][0] == "table_check_test"
+        assert results[0][0] == "TABLE_CHECK_TEST"
 
     def test_show_tables(self, connection):
         """dbt may use SHOW TABLES for discovery."""
@@ -343,12 +339,10 @@ class TestDBTQueryExecution:
         cursor.execute("CREATE TABLE show_test_a (x INT)")
         cursor.execute("CREATE TABLE show_test_b (y INT)")
         cursor.execute("SHOW TABLES")
-        results = cursor.fetchall()
-        # snowduck returns single-column tuples with table name
-        table_names = [row[0] for row in results]
-        # Table names are lowercase in DuckDB
-        assert "show_test_a" in table_names
-        assert "show_test_b" in table_names
+        name_index = [c.name for c in cursor.description].index("name")
+        table_names = [row[name_index] for row in cursor.fetchall()]
+        assert "SHOW_TEST_A" in table_names
+        assert "SHOW_TEST_B" in table_names
 
     def test_describe_table(self, connection):
         """dbt may use DESCRIBE TABLE for column info."""
@@ -357,10 +351,9 @@ class TestDBTQueryExecution:
         cursor.execute("DESCRIBE TABLE describe_test")
         results = cursor.fetchall()
         assert len(results) == 2
-        # DESCRIBE returns column info (lowercase in DuckDB)
         col_names = [row[0] for row in results]
-        assert "id" in col_names
-        assert "name" in col_names
+        assert "ID" in col_names
+        assert "NAME" in col_names
 
     def test_multi_statement_execution(self, connection):
         """dbt may execute multiple statements in sequence."""
@@ -606,3 +599,133 @@ class TestDBTErrorHandling:
         except snowflake.connector.errors.ProgrammingError as e:
             # Error should have sfqid attribute
             assert hasattr(e, "sfqid")
+
+
+# ============================================================================
+# Relation listing - the exact queries and columns dbt-snowflake indexes into
+# ============================================================================
+
+try:
+    import agate
+
+    HAS_AGATE = True
+except ImportError:  # pragma: no cover - agate ships with dbt
+    HAS_AGATE = False
+
+
+@pytest.mark.skipif(not HAS_CONNECTOR, reason="snowduck connector not available")
+class TestDBTListRelations:
+    """`SnowflakeAdapter.list_relations_without_caching` and its two macros.
+
+    dbt runs `show objects in <schema>` and `show user functions in <schema>`,
+    lower-cases the column names and then `agate.Table.select()`s a fixed list
+    out of each. A missing column raises `ValueError: tuple.index(x): x not in
+    tuple` and takes down the whole run, so the column names are asserted
+    directly rather than inferred from a successful query.
+    """
+
+    # dbt/adapters/snowflake/impl.py
+    TABULAR_COLUMNS = [
+        "database_name",
+        "schema_name",
+        "name",
+        "kind",
+        "is_dynamic",
+        "is_iceberg",
+    ]
+    FUNCTION_COLUMNS = ["catalog_name", "schema_name", "name", "is_builtin"]
+
+    @staticmethod
+    def _as_agate(cursor):
+        return agate.Table(
+            [list(row) for row in cursor.fetchall()],
+            column_names=[c.name.lower() for c in cursor.description],
+            column_types=[agate.Text()] * len(cursor.description),
+        )
+
+    @pytest.fixture
+    def populated(self, connection):
+        cursor = connection.cursor()
+        cursor.execute("CREATE TABLE dbt_model (id INT)")
+        cursor.execute("CREATE VIEW dbt_view AS SELECT * FROM dbt_model")
+        cursor.execute("CREATE FUNCTION dbt_udf(x INT) RETURNS INT AS $$ x $$")
+        return cursor
+
+    @pytest.mark.skipif(not HAS_AGATE, reason="agate not installed")
+    def test_show_objects_select_matches_dbt(self, populated):
+        """snowflake__show_objects_sql, verbatim."""
+        populated.execute("show objects in TEST_DB.TEST_SCHEMA\n    limit 10000\n    ;")
+        selected = self._as_agate(populated).select(self.TABULAR_COLUMNS)
+        kinds = {row["name"]: row["kind"] for row in selected}
+        assert kinds["DBT_MODEL"] == "TABLE"
+        assert kinds["DBT_VIEW"] == "VIEW"
+
+    @pytest.mark.skipif(not HAS_AGATE, reason="agate not installed")
+    def test_show_user_functions_select_matches_dbt(self, populated):
+        """snowflake__list_function_relations_without_caching, verbatim."""
+        populated.execute("show user functions in TEST_DB.TEST_SCHEMA")
+        selected = self._as_agate(populated).select(self.FUNCTION_COLUMNS)
+        udfs = [row for row in selected if row["is_builtin"] == "N"]
+        assert [row["name"] for row in udfs] == ["DBT_UDF"]
+        assert udfs[0]["catalog_name"] == "TEST_DB"
+        assert udfs[0]["schema_name"] == "TEST_SCHEMA"
+
+    def test_show_object_metadata(self, populated):
+        """snowflake__show_object_metadata narrows to one relation."""
+        populated.execute(
+            "show objects in TEST_DB.TEST_SCHEMA starts with 'DBT_MODEL' limit 1"
+        )
+        names = [c.name for c in populated.description]
+        rows = populated.fetchall()
+        assert len(rows) == 1
+        assert rows[0][names.index("name")] == "DBT_MODEL"
+
+    def test_list_schemas(self, connection):
+        """snowflake__list_schemas reads the `name` column."""
+        cursor = connection.cursor()
+        cursor.execute("show terse schemas in database TEST_DB\n    limit 10000")
+        names = [c.name for c in cursor.description]
+        assert "name" in names
+        schemas = [row[names.index("name")] for row in cursor.fetchall()]
+        assert "TEST_SCHEMA" in schemas
+
+    def test_check_schema_exists(self, connection):
+        """snowflake__check_schema_exists queries INFORMATION_SCHEMA.SCHEMATA."""
+        cursor = connection.cursor()
+        cursor.execute(
+            "select count(*) from TEST_DB.information_schema.schemata "
+            "where upper(schema_name) = upper('TEST_SCHEMA') "
+            "and upper(catalog_name) = upper('TEST_DB')"
+        )
+        assert cursor.fetchone()[0] == 1
+
+    def test_get_catalog_columns(self, connection):
+        """snowflake__get_catalog_tables_sql selects these from the catalog."""
+        cursor = connection.cursor()
+        cursor.execute("CREATE TABLE catalog_model (id INT)")
+        cursor.execute(
+            "select table_catalog, table_schema, table_name, table_type, comment, "
+            "table_owner, clustering_key, row_count, bytes, last_altered, is_dynamic "
+            "from TEST_DB.information_schema.tables "
+            "where table_name = 'CATALOG_MODEL'"
+        )
+        row = dict(
+            zip([c.name for c in cursor.description], cursor.fetchone(), strict=True)
+        )
+        assert row["table_type"] == "BASE TABLE"
+        assert row["is_dynamic"] == "NO"
+
+    def test_query_tag_round_trip(self, connection):
+        """set_query_tag reads the old tag back, overwrites it and restores it."""
+        cursor = connection.cursor()
+        cursor.execute("show parameters like 'query_tag' in session")
+        original = cursor.fetchall()[0][1]
+        assert original == ""
+
+        cursor.execute("alter session set query_tag = 'dbt-run'")
+        cursor.execute("show parameters like 'query_tag' in session")
+        assert cursor.fetchall()[0][1] == "dbt-run"
+
+        cursor.execute("alter session unset query_tag")
+        cursor.execute("show parameters like 'query_tag' in session")
+        assert cursor.fetchall()[0][1] == ""

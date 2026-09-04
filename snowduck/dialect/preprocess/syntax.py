@@ -62,6 +62,7 @@ def preprocess_syntax(
 
     if isinstance(expression, exp.Merge):
         _unqualify_merge_assignments(expression)
+        _qualify_merge_insert_values(expression)
         return expression
 
     if isinstance(expression, exp.Column):
@@ -224,6 +225,35 @@ def _unqualify_merge_assignments(merge: exp.Merge) -> None:
             target = assignment.this if isinstance(assignment, exp.EQ) else None
             if isinstance(target, exp.Column) and target.args.get("table"):
                 assignment.set("this", exp.column(target.this))
+
+
+def _qualify_merge_insert_values(merge: exp.Merge) -> None:
+    """Point bare columns in WHEN NOT MATCHED ... VALUES at the source.
+
+    There is no target row to read in a NOT MATCHED branch, so Snowflake
+    resolves an unqualified column in the VALUES list against the source.
+    DuckDB has both relations in scope and rejects the same column as
+    ambiguous - which is how dbt's incremental MERGE, whose VALUES list is bare
+    column names, failed on every run after the first.
+    """
+    source = merge.args.get("using")
+    alias = source.alias_or_name if isinstance(source, exp.Expression) else None
+    if not alias:
+        return
+
+    for when in merge.find_all(exp.When):
+        if when.args.get("matched"):
+            continue
+        insert = when.args.get("then")
+        if not isinstance(insert, exp.Insert):
+            continue
+        values = insert.expression
+        if not isinstance(values, exp.Tuple):
+            continue
+        for value in values.expressions:
+            for column in value.find_all(exp.Column):
+                if not column.args.get("table"):
+                    column.set("table", exp.to_identifier(alias))
 
 
 def _sequence_value(column: exp.Column) -> exp.Expression | None:

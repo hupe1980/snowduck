@@ -4,6 +4,7 @@ from typing import cast
 import sqlglot
 from sqlglot import exp
 
+from ..show import build_show_sql, parse_show
 from .context import DialectContext
 
 
@@ -110,14 +111,34 @@ def transform_function(expression: exp.Create, context: DialectContext) -> str:
     or_replace = "OR REPLACE " if expression.args.get("replace") else ""
     if_not_exists = "IF NOT EXISTS " if expression.args.get("exists") else ""
 
-    # A body that is a full query becomes a DuckDB table macro.
-    as_clause = (
-        f"TABLE ({translated_body})"
-        if isinstance(parsed_body, (exp.Select, exp.Union, exp.Subquery))
-        else f"({translated_body})"
-    )
+    # Whether a UDF is a table function is decided by its signature, not by the
+    # shape of its body: `RETURNS FLOAT AS $$ SELECT amount * 1.2 $$` is a
+    # scalar function returning one value, and dbt's SQL function models are
+    # written exactly that way. Reading it off the body instead produced a
+    # DuckDB table macro that could only be called in a FROM clause.
+    if _returns_table(expression):
+        as_clause = f"TABLE ({translated_body})"
+    elif isinstance(parsed_body, (exp.Select, exp.Union, exp.Subquery)):
+        # A scalar function whose body is a query: a scalar subquery.
+        as_clause = f"(({translated_body}))"
+    else:
+        as_clause = f"({translated_body})"
 
     return f"CREATE {or_replace}MACRO {if_not_exists}{name}({params}) AS {as_clause}"
+
+
+def _returns_table(expression: exp.Create) -> bool:
+    """True for `RETURNS TABLE (...)`."""
+    properties = expression.args.get("properties")
+    for prop in properties.expressions if properties else []:
+        if not isinstance(prop, exp.ReturnsProperty):
+            continue
+        if prop.args.get("is_table"):
+            return True
+        returns = prop.this
+        if isinstance(returns, exp.Schema) and isinstance(returns.this, exp.Var):
+            return str(returns.this.this).upper() == "TABLE"
+    return False
 
 
 def transform_clone(
@@ -176,47 +197,83 @@ def transform_create(expression: exp.Create, context: DialectContext) -> str:
 
         return f"ATTACH {if_not_exists}DATABASE '{db_file}' AS {db_name}"
 
-    if kind == "SCHEMA":
-        ident = expression.find(exp.Identifier)
-        if ident and not ident.quoted:
-            # Uppercase unquoted schema names to match Snowflake behavior
-            ident.set("this", ident.this.upper())
+    if kind in ("TABLE", "VIEW"):
+        _normalise_relation_properties(expression)
 
     return expression.sql(dialect="duckdb")
+
+
+#: Snowflake relation properties DuckDB has no equivalent for. TRANSIENT only
+#: removes Fail-safe, which SnowDuck does not have either; TEMPORARY is dropped
+#: only when the relation is qualified, because DuckDB puts temporary objects in
+#: its own `temp` catalog and rejects any other qualification - and dbt creates
+#: its incremental staging relations as
+#: `create or replace temporary view <db>.<schema>.<name>__dbt_tmp`.
+_DROPPED_RELATION_PROPERTIES = (exp.TransientProperty,)
+
+
+def _normalise_relation_properties(expression: exp.Create) -> None:
+    properties = expression.args.get("properties")
+    if properties is None:
+        return
+
+    target = expression.this
+    if isinstance(target, exp.Schema):
+        target = target.this
+    qualified = isinstance(target, exp.Table) and bool(target.db or target.catalog)
+
+    kept = [
+        prop
+        for prop in properties.expressions
+        if not isinstance(prop, _DROPPED_RELATION_PROPERTIES)
+        and not (qualified and isinstance(prop, exp.TemporaryProperty))
+    ]
+    if len(kept) == len(properties.expressions):
+        return
+    if kept:
+        properties.set("expressions", kept)
+    else:
+        expression.set("properties", None)
 
 
 def transform_describe(expression: exp.Describe, context: DialectContext) -> str:
-    if str(expression.args.get("kind")).upper() in ("TABLE", "VIEW"):
-        if table := expression.find(exp.Table):
-            database = table.catalog or context.current_database
-            schema = table.db or context.current_schema
+    """DESCRIBE TABLE/VIEW -> an information-schema query in Snowflake's shape."""
+    if str(expression.args.get("kind")).upper() not in ("TABLE", "VIEW"):
+        return expression.sql(dialect="duckdb")
 
-            if not database:
-                raise ValueError(
-                    f"No database context for DESCRIBE {table.name}. "
-                    f"Use 'USE DATABASE <db>' or specify database explicitly."
-                )
-            if not schema:
-                raise ValueError(
-                    f"No schema context for DESCRIBE {table.name}. "
-                    f"Use 'USE SCHEMA <schema>' or specify schema explicitly."
-                )
-            if not table.name:
-                raise ValueError("Table name must be specified for DESCRIBE")
+    table = expression.find(exp.Table)
+    if table is None:
+        return expression.sql(dialect="duckdb")
 
-            if (
-                schema
-                and schema.upper() == context.info_schema_manager.info_schema_name
-            ):
-                return context.info_schema_manager.describe_info_schema_sql(
-                    view=f"{schema}.{table.name}"
-                )
+    manager = context.info_schema_manager
+    database = table.catalog or context.current_database
+    schema = table.db or context.current_schema
 
-            return context.info_schema_manager.describe_table_sql(
-                database=database, schema=schema, table=table.name
-            )
+    if not database:
+        raise ValueError(
+            f"No database context for DESCRIBE {table.name}. "
+            f"Use 'USE DATABASE <db>' or specify database explicitly."
+        )
+    if not schema:
+        raise ValueError(
+            f"No schema context for DESCRIBE {table.name}. "
+            f"Use 'USE SCHEMA <schema>' or specify schema explicitly."
+        )
+    if not table.name:
+        raise ValueError("Table name must be specified for DESCRIBE")
 
-    return expression.sql(dialect="duckdb")
+    # An INFORMATION_SCHEMA view has already been rewritten onto its backing
+    # view by preprocess_info_schema, so the schema here is the internal name.
+    # Its columns come from DuckDB rather than from _columns, which only tracks
+    # user tables.
+    if schema.upper() in ("INFORMATION_SCHEMA", manager.info_schema_name.upper()):
+        return manager.describe_info_schema_sql(
+            view=f"{database}.{manager.info_schema_name}.{table.name}"
+        )
+
+    return manager.describe_table_sql(
+        database=database, schema=schema, table=table.name
+    )
 
 
 def transform_use(expression: exp.Use, context: DialectContext) -> str:
@@ -247,47 +304,32 @@ def transform_use(expression: exp.Use, context: DialectContext) -> str:
     return expression.sql(dialect="duckdb")
 
 
-def transform_show(expression: exp.Show, context: DialectContext) -> str:
-    """Transform SHOW commands to DuckDB-compatible SQL."""
-    if isinstance(expression.this, str) and expression.this.upper() == "DATABASES":
-        return context.info_schema_manager.show_databases_sql()
+def transform_show(expression: exp.Expression, context: DialectContext) -> str:
+    """Render a Snowflake ``SHOW`` as a DuckDB query with Snowflake's columns.
 
-    if isinstance(expression.this, str) and expression.this.upper() == "SCHEMAS":
-        database = context.current_database or ""
-        if expression.args.get("scope_kind") == "DATABASE":
-            scope = expression.args.get("scope")
-            if isinstance(scope, exp.Table) and isinstance(scope.this, exp.Identifier):
-                database = scope.this.name
-        return context.info_schema_manager.show_schemas_sql(database=database)
+    ``exp.Show`` and ``exp.Command`` both reach this - sqlglot models only part
+    of the SHOW grammar and falls back to ``Command`` for the rest - so the
+    statement is re-read from its own Snowflake SQL by a single scanner.
+    """
+    request = parse_show(expression)
+    if request is None:
+        return expression.sql(dialect="duckdb")
 
-    if isinstance(expression.this, str) and expression.this.upper() == "OBJECTS":
-        database = context.current_database or ""
-        schema = context.current_schema or ""
-        if expression.args.get("scope_kind") == "SCHEMA":
-            scope = expression.args.get("scope")
-            if isinstance(scope, exp.Table) and isinstance(scope.this, exp.Identifier):
-                schema = scope.this.name
-                if isinstance(scope.db, exp.Identifier):
-                    database = scope.db.name
-        return context.info_schema_manager.show_objects_sql(
-            database=database, schema=schema
-        )
+    resolved = request.resolved(
+        database=context.current_database,
+        schema=context.current_schema,
+    )
+    return build_show_sql(resolved, context)
 
-    if isinstance(expression.this, str) and expression.this.upper() == "COLUMNS":
-        database = context.current_database or ""
-        schema = context.current_schema or ""
-        table = ""
-        scope = expression.args.get("scope")
-        if isinstance(scope, exp.Table):
-            table = scope.name
-            if isinstance(scope.args.get("db"), exp.Identifier):
-                schema = scope.args["db"].name
-            if isinstance(scope.args.get("catalog"), exp.Identifier):
-                database = scope.args["catalog"].name
-        return context.info_schema_manager.show_columns_sql(
-            database=database, schema=schema, table=table
-        )
 
+def transform_command(expression: exp.Command, context: DialectContext) -> str:
+    """Statements sqlglot parsed as opaque commands.
+
+    Only ``SHOW`` is claimed here; everything else keeps its previous
+    behaviour of being handed to DuckDB verbatim.
+    """
+    if parse_show(expression) is not None:
+        return transform_show(expression, context)
     return expression.sql(dialect="duckdb")
 
 

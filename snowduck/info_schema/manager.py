@@ -107,6 +107,13 @@ class InfoSchemaManager:
 
         if not self.has_database(database):
             self._execute_sql(f"ATTACH DATABASE ':memory:' AS {database}")
+
+        # Keyed on the info schema rather than on the database: `CREATE DATABASE`
+        # attaches the catalog through the normal translation path, so by the
+        # time this runs the database already exists and a database-level check
+        # would skip the views entirely - leaving every INFORMATION_SCHEMA query
+        # against that database failing with "Table _tables does not exist".
+        if not self.has_schema(database, self.info_schema_name):
             sql = load_sql(
                 self._get_filepath("database_information_schema.sql"),
                 account_catalog_name=self.account_catalog_name,
@@ -143,15 +150,6 @@ class InfoSchemaManager:
             database=database,
             schema=schema,
             table=table,
-        )
-
-    def show_databases_sql(self) -> str:
-        """
-        Returns the SQL to show all databases.
-        """
-        return load_sql(
-            self._get_filepath("show_databases.sql"),
-            account_catalog_name=self.account_catalog_name,
         )
 
     def get_table_columns(
@@ -229,38 +227,6 @@ class InfoSchemaManager:
 
     def clear_cache(self) -> None:
         self._columns_cache.clear()
-
-    def show_schemas_sql(self, *, database: str) -> str:
-        """
-        Returns the SQL to show all schemas for a database.
-        """
-        return load_sql(
-            self._get_filepath("show_schemas.sql"),
-            database=database,
-            info_schema_name=self.info_schema_name,
-        )
-
-    def show_columns_sql(self, *, database: str, schema: str, table: str = "") -> str:
-        """
-        Returns the SQL for SHOW COLUMNS, optionally narrowed to one table.
-        """
-        return load_sql(
-            self._get_filepath("show_columns.sql"),
-            database=database,
-            schema=schema,
-            table=table,
-        )
-
-    def show_objects_sql(self, *, database: str, schema: str) -> str:
-        """
-        Returns the SQL to show all objects for a schema.
-        """
-        return load_sql(
-            self._get_filepath("show_objects.sql"),
-            database=database,
-            schema=schema,
-            info_schema_name=self.info_schema_name,
-        )
 
     def _execute_sql(self, sql: str, **params: Any) -> DuckDBPyConnection:
         """

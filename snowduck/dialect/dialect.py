@@ -27,6 +27,7 @@ from .context import DialectContext
 from .preprocess import (
     preprocess_arrays,
     preprocess_bitwise,
+    preprocess_case_folding,
     preprocess_current_schema,
     preprocess_date_functions,
     preprocess_functions,
@@ -43,6 +44,7 @@ from .preprocess import (
     preprocess_variables,
 )
 from .transforms import (
+    transform_command,
     transform_copy,
     transform_create,
     transform_describe,
@@ -51,10 +53,13 @@ from .transforms import (
     transform_use,
 )
 
-# Applied in order. Ordering matters in two places: date handling must run
-# before `special_expressions`, so string literals are already cast to DATE;
-# and `syntax` must run before `functions`, so rewritten nodes are seen by both.
+# Applied in order. Ordering matters in three places: case folding runs first,
+# so it only ever sees identifiers the user wrote and not ones a later rewrite
+# synthesised; date handling must run before `special_expressions`, so string
+# literals are already cast to DATE; and `syntax` must run before `functions`,
+# so rewritten nodes are seen by both.
 _PREPROCESSORS = (
+    preprocess_case_folding,
     preprocess_variables,
     preprocess_identifier,
     preprocess_info_schema,
@@ -73,6 +78,18 @@ _PREPROCESSORS = (
     preprocess_special_expressions,
 )
 
+_CacheKey = tuple[
+    str,
+    "str | None",
+    "str | None",
+    "str | None",
+    "str | None",
+    str,
+    str,
+    tuple[tuple[str, str], ...],
+    tuple[tuple[str, str], ...],
+]
+
 # Whole statements with no DuckDB AST equivalent, rendered as SQL text.
 _STATEMENT_TRANSFORMS: dict[type[exp.Expression], Any] = {
     exp.Show: transform_show,
@@ -81,13 +98,14 @@ _STATEMENT_TRANSFORMS: dict[type[exp.Expression], Any] = {
     exp.Use: transform_use,
     exp.Copy: transform_copy,
     exp.Set: transform_set,
+    exp.Command: transform_command,
 }
 
 
 class Dialect(DuckDB):  # type: ignore[misc]
     """DuckDB, extended with Snowflake semantics and session context."""
 
-    _SQL_CACHE: "OrderedDict[tuple[str, str | None, str | None, str | None, str | None, str, str], str]" = OrderedDict()
+    _SQL_CACHE: "OrderedDict[_CacheKey, str]" = OrderedDict()
     _SQL_CACHE_MAX = 1024
 
     def __init__(self, context: DialectContext):
@@ -132,9 +150,10 @@ class Dialect(DuckDB):  # type: ignore[misc]
         return len(cls._SQL_CACHE)
 
     @classmethod
-    def _cache_key(
-        cls, snowflake_sql: str, context: DialectContext
-    ) -> tuple[str, str | None, str | None, str | None, str | None, str, str]:
+    def _cache_key(cls, snowflake_sql: str, context: DialectContext) -> "_CacheKey":
+        # Session parameters and variables are part of the key: SHOW PARAMETERS
+        # and SHOW VARIABLES render their current values straight into the SQL,
+        # so a key without them would serve a stale answer after ALTER SESSION.
         return (
             snowflake_sql,
             context.current_database,
@@ -143,6 +162,8 @@ class Dialect(DuckDB):  # type: ignore[misc]
             context.current_warehouse,
             context.info_schema_manager.account_catalog_name,
             context.info_schema_manager.info_schema_name,
+            tuple(sorted(context.session_parameters.items())),
+            tuple(sorted(context.session_variables.items())),
         )
 
     @classmethod
@@ -154,6 +175,12 @@ class Dialect(DuckDB):  # type: ignore[misc]
             expression.find(exp.Parameter) or expression.find(exp.Placeholder)
         )
         if has_variables:
+            return expression.sql(dialect=dialect)
+
+        # SHOW renders some results as literals read from outside the catalog -
+        # SHOW STAGES lists the stage directory - so its SQL is not a pure
+        # function of the cache key. Rendering it is cheap; caching it is wrong.
+        if isinstance(expression, (exp.Show, exp.Command)):
             return expression.sql(dialect=dialect)
 
         key = cls._cache_key(snowflake_sql, dialect.context)

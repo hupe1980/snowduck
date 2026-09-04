@@ -12,3 +12,5 @@ class DialectContext:
     info_schema_manager: InfoSchemaManager
     # Session variables (SET var = value)
     session_variables: dict[str, str] = field(default_factory=dict)
+    # Session parameters (ALTER SESSION SET param = value), keyed upper case
+    session_parameters: dict[str, str] = field(default_factory=dict)

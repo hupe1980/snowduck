@@ -18,5 +18,9 @@ SELECT
     NULL::VARCHAR AS "policy name",
     NULL::JSON AS "privacy domain",
 FROM {account_catalog_name}.{info_schema_name}._columns
-WHERE table_catalog = '{database}' AND table_schema = '{schema}' AND table_name = '{table}'
+-- Case-insensitive: Snowflake folds unquoted identifiers to upper case at DDL
+-- time, DuckDB stores them as written, so the comparison is folded instead.
+WHERE upper(table_catalog) = upper('{database}')
+  AND upper(table_schema) = upper('{schema}')
+  AND upper(table_name) = upper('{table}')
 ORDER BY ordinal_position

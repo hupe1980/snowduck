@@ -29,7 +29,9 @@ SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavi
 | **SQL UDFs** | CREATE FUNCTION ... AS $$ ... $$ (scalar and table) |
 | **Table Functions** | TABLE(...), FLATTEN, SPLIT_TO_TABLE, LATERAL FLATTEN |
 | **Session Variables** | SET/SELECT \$variable syntax |
-| **Information Schema** | Query metadata (databases, tables, columns) |
+| **Session Parameters** | ALTER SESSION SET/UNSET, SHOW PARAMETERS |
+| **Catalog (SHOW)** | OBJECTS, TABLES, VIEWS, SCHEMAS, DATABASES, COLUMNS, [USER] FUNCTIONS, SEQUENCES, STAGES, WAREHOUSES, PARAMETERS, VARIABLES - with TERSE, LIKE, STARTS WITH, LIMIT ... FROM |
+| **Information Schema** | Per-database INFORMATION_SCHEMA: DATABASES, SCHEMATA, TABLES, VIEWS, COLUMNS, FUNCTIONS, SEQUENCES |
 
 ### Function Support
 
@@ -77,6 +79,21 @@ they are pinned by an executable conformance suite
 | `OBJECT_CONSTRUCT` drops NULLs top-level only | nested nulls survive |
 | Arrays are heterogeneous | `ARRAY_CONSTRUCT(1,'two')` → `[1,"two"]` |
 | A format model sets decoration, not scale | `TO_NUMBER('$1,234.56','$9,999.99')` → `1235` |
+
+### Snowflake Identifier Semantics
+
+Unquoted identifiers fold to upper case, quoted ones keep their case - the same
+rule Snowflake applies:
+
+```sql
+CREATE TABLE my_model (id INT);   -- creates MY_MODEL with column ID
+CREATE TABLE "MixedCase" (x INT); -- creates MixedCase
+```
+
+This is what makes a name read back out of the catalog match the name a client
+builds for it. dbt-snowflake, for instance, lists a schema with `SHOW OBJECTS`
+and then looks each relation up under the upper-cased name its own `Relation`
+renders to.
 
 ### SQL User-Defined Functions
 
