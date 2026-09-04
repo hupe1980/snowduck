@@ -77,10 +77,21 @@ def patch_snowflake(db_file: str = ":memory:", reset: bool = False) -> Iterator[
     """
     import glob
     import os
+    from pathlib import Path
 
     if reset and db_file != ":memory:":
-        # Delete the main file and any related files (.wal, .tmp, etc.)
-        for pattern in [db_file, f"{db_file}.wal", f"{db_file}.tmp"]:
+        # Delete the main file, its sidecars, and the per-database catalogs
+        # stored beside it (`data.duckdb` -> `data.MY_DB.duckdb`). Without the
+        # last pattern a reset would leave every CREATE DATABASE behind.
+        base = Path(db_file)
+        patterns = [
+            db_file,
+            f"{db_file}.wal",
+            f"{db_file}.tmp",
+            str(base.with_name(f"{base.stem}.*{base.suffix}")),
+            str(base.with_name(f"{base.stem}.*{base.suffix}.wal")),
+        ]
+        for pattern in patterns:
             for file in glob.glob(pattern):
                 if os.path.exists(file):
                     os.remove(file)

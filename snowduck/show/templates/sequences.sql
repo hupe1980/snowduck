@@ -2,7 +2,7 @@
 SELECT
     TO_TIMESTAMP(0)::TIMESTAMPTZ AS 'created_on',
     s.sequence_name AS 'name',
-    s.schema_name AS 'schema_name',
+    CASE WHEN s.schema_name = 'main' THEN 'MAIN' ELSE s.schema_name END AS 'schema_name',
     s.database_name AS 'database_name',
     s.start_value AS 'next_value',
     s.increment_by AS 'interval',

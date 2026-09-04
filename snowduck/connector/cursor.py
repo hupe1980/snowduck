@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import shutil
@@ -15,6 +16,7 @@ from snowflake.connector.cursor import ResultMetadata
 from sqlglot import exp
 
 from ..dialect import Dialect, DialectContext
+from ..dialect.transforms import claims_command
 from ..info_schema import InfoSchemaManager
 from .rowtype import convert_dbapi_description_to_describe, describe_as_result_metadata
 
@@ -68,6 +70,92 @@ def _identifier_name(node: exp.Expression | None) -> str | None:
     return None
 
 
+_SQLGLOT_LOGGER = logging.getLogger("sqlglot")
+_FALLBACK_WARNING = "contains unsupported syntax"
+
+
+class _DeferredFallbackWarnings(logging.Filter):
+    """Hold sqlglot's "falling back to Command" warnings during a parse.
+
+    sqlglot logs a warning whenever it cannot model a statement and degrades it
+    to an opaque Command. SnowDuck handles several of those deliberately - the
+    whole SHOW family is re-read by :mod:`snowduck.show` - so the warning is
+    noise for exactly the statements that work. dbt emits about nine of them
+    per build, which reads like a defect.
+
+    The records are captured rather than suppressed: a fallback SnowDuck does
+    *not* handle is still worth telling the user about, so it is replayed.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _FALLBACK_WARNING in record.getMessage():
+            self.records.append(record)
+            return False
+        return True
+
+    def replay(self) -> None:
+        for record in self.records:
+            _SQLGLOT_LOGGER.handle(record)
+
+
+# `LIST @stage` is not modelled by sqlglot's Snowflake parser, which reads the
+# leading word as a column and `@stage` as a session variable. Recognising it
+# here keeps the stage commands together in the dialect layer.
+_STAGE_LISTING = re.compile(r"^\s*(LIST|LS)\s+(@\S+)\s*;?\s*$", re.IGNORECASE)
+
+# `UNSET <var>` is likewise read as a column with an alias rather than a
+# statement, so it is recognised here.
+_UNSET_VARIABLE = re.compile(r"^\s*UNSET\s+([A-Za-z_][\w$]*)\s*;?\s*$", re.IGNORECASE)
+
+
+def _as_unset(command: str) -> exp.Command | None:
+    match = _UNSET_VARIABLE.match(command)
+    if match is None:
+        return None
+    return exp.Command(this="UNSET", expression=exp.Var(this=match.group(1)))
+
+
+def _as_stage_listing(command: str) -> exp.Command | None:
+    match = _STAGE_LISTING.match(command)
+    if match is None:
+        return None
+    return exp.Command(
+        this=match.group(1).upper(), expression=exp.Var(this=match.group(2))
+    )
+
+
+def _parse_snowflake(command: str) -> list[Any]:
+    """Parse Snowflake SQL, quietly for statements SnowDuck knowingly handles."""
+    for claimed in (_as_stage_listing(command), _as_unset(command)):
+        if claimed is not None:
+            return [claimed]
+
+    deferred = _DeferredFallbackWarnings()
+    _SQLGLOT_LOGGER.addFilter(deferred)
+    try:
+        expressions = sqlglot.parse(command, read="snowflake")
+    finally:
+        _SQLGLOT_LOGGER.removeFilter(deferred)
+
+    unhandled = [
+        expression
+        for expression in expressions
+        if isinstance(expression, exp.Command) and not claims_command(expression)
+    ]
+    if unhandled:
+        deferred.replay()
+
+    return expressions
+
+
+def _is_quoted(identifier: Any) -> bool:
+    return bool(getattr(identifier, "quoted", False))
+
+
 def extract_sql_command(expression: exp.Expression) -> str:
     kind = expression.args.get("kind")
 
@@ -92,6 +180,40 @@ def extract_sql_command(expression: exp.Expression) -> str:
     return expression.key.upper()
 
 
+_SIZED_STRING_TYPES = (
+    exp.DataType.Type.VARCHAR,
+    exp.DataType.Type.CHAR,
+    exp.DataType.Type.NCHAR,
+    exp.DataType.Type.NVARCHAR,
+)
+
+
+def _declared_length(kind: exp.Expression | None) -> int | None:
+    """The `n` in `VARCHAR(n)`, for the types that carry one."""
+    if not isinstance(kind, exp.DataType) or kind.this not in _SIZED_STRING_TYPES:
+        return None
+    for parameter in kind.expressions or []:
+        value = parameter.this if isinstance(parameter, exp.DataTypeParam) else None
+        if isinstance(value, exp.Literal) and not value.is_string:
+            try:
+                return int(value.this)
+            except (TypeError, ValueError):
+                return None
+        break
+    return None
+
+
+def _dropped_column_name(action: exp.Drop) -> str | None:
+    """The column an `ALTER TABLE ... DROP COLUMN` names, if it is one."""
+    kind = action.args.get("kind")
+    if not isinstance(kind, str) or kind.upper() != "COLUMN":
+        return None
+    target = action.this
+    if isinstance(target, (exp.Column, exp.Identifier)):
+        return target.name
+    return None
+
+
 class Cursor:
     def __init__(
         self,
@@ -101,7 +223,13 @@ class Cursor:
         use_dict_result: bool = False,
     ) -> None:
         self._sf_conn = sf_conn
-        self._duck_cur = duck_conn.cursor()
+        # The session's connection, not a fork of it. Snowflake scopes a
+        # transaction to the session, so BEGIN on one cursor has to cover work
+        # done through any other cursor of the same connection - a per-cursor
+        # DuckDB connection gave each its own transaction and silently dropped
+        # the rollback. Results are materialised eagerly (see _execute), so
+        # sharing does not let one cursor invalidate another's rows.
+        self._duck_cur = duck_conn
         self._info_schema_manager = info_schema_manager
         self._use_dict_result = use_dict_result
         self._is_closed = False
@@ -111,6 +239,7 @@ class Cursor:
         self._last_params: Sequence[Any] | dict[Any, Any] | None = None
         self._sqlstate: str | None = None
         self._arrow_table: pa.Table | None = None
+        self._duck_description: list[Any] | None = None
         self._arrow_table_fetch_index: int = 0
         self._rowcount: int | None = None
         self._sfqid: str | None = None
@@ -141,29 +270,41 @@ class Cursor:
 
     @property
     def description(self) -> list[ResultMetadata]:
+        with self._sf_conn.lock:
+            return self._description_locked()
+
+    def _description_locked(self) -> list[ResultMetadata]:
         table_name = self._infer_table_name()
+        overrides = None
+        if table_name:
+            # Declared VARCHAR lengths live in the catalog, not in DuckDB's
+            # type, so they have to be read back for `internal_size` to be the
+            # size the column was created with rather than Snowflake's maximum.
+            columns = self._sf_conn.get_column_metadata(table_name)
+            if columns:
+                overrides = {column["name"]: column for column in columns}
         return describe_as_result_metadata(
             self.describe_last_sql(),
             database=self._sf_conn.database,
             schema=self._sf_conn.schema,
             table=table_name,
+            overrides=overrides,
         )
 
     def describe_last_sql(self) -> list[Any]:
-        if not self._duck_cur.description:
+        description = self._duck_description
+        if not description:
             raise TypeError("No result set available to describe")
         nullability = self._infer_nullability()
         if nullability:
             patched: list[tuple[Any, ...]] = []
-            for column in self._duck_cur.description:
+            for column in description:
                 name, type_name, *rest = column
                 null_ok = nullability.get(name)
                 patched.append((name, type_name, None, None, None, null_ok))
             return cast(list[Any], convert_dbapi_description_to_describe(patched))
 
-        return cast(
-            list[Any], convert_dbapi_description_to_describe(self._duck_cur.description)
-        )
+        return cast(list[Any], convert_dbapi_description_to_describe(description))
 
     def _infer_table_name(self) -> str | None:
         if not self._last_sql:
@@ -268,6 +409,14 @@ class Cursor:
         *args: Any,
         **kwargs: Any,
     ) -> Self:
+        with self._sf_conn.lock:
+            return self._execute_locked(command, params)
+
+    def _execute_locked(
+        self,
+        command: str,
+        params: Sequence[Any] | dict[Any, Any] | None = None,
+    ) -> Self:
         try:
             self._sqlstate = None
 
@@ -277,7 +426,7 @@ class Cursor:
             # Snowflake parser incorrectly only includes first key
             command = self._preprocess_json_extract_path_text(command)
 
-            expressions = sqlglot.parse(command, read="snowflake")
+            expressions = _parse_snowflake(command)
 
             if not expressions:
                 return self
@@ -315,6 +464,105 @@ class Cursor:
             raise snowflake.connector.errors.ProgrammingError(
                 msg=str(e) or type(e).__name__, errno=2, sqlstate=self._sqlstate
             ) from None
+
+    def _record_declared_lengths(self, create: exp.Expression, table: str) -> None:
+        """Persist VARCHAR/CHAR sizes, which DuckDB discards at DDL time."""
+        lengths: dict[str, int | None] = {}
+        for column in create.find_all(exp.ColumnDef):
+            length = _declared_length(column.kind)
+            if length is not None:
+                lengths[column.name.upper()] = length
+
+        if not lengths:
+            return
+
+        database, schema = self._relation_target(create.this)
+        if not database or not schema:
+            return
+
+        self._info_schema_manager.record_column_lengths(
+            database=database, schema=schema, table=table, lengths=lengths
+        )
+
+    def _record_altered_lengths(self, alter: exp.Alter, table: str) -> None:
+        """Keep declared VARCHAR/CHAR sizes in step with ALTER TABLE.
+
+        A column added or retyped by ALTER carries a declared size exactly as
+        one in a CREATE does, and one dropped or retyped away from VARCHAR has
+        to forget the size it used to have - otherwise a stale length keeps
+        being reported for a column that no longer has one.
+        """
+        lengths: dict[str, int | None] = {}
+        for action in alter.args.get("actions") or []:
+            if isinstance(action, exp.ColumnDef):
+                lengths[action.name.upper()] = _declared_length(action.kind)
+            elif isinstance(action, exp.AlterColumn):
+                dtype = action.args.get("dtype")
+                if dtype is not None:
+                    lengths[action.name.upper()] = _declared_length(dtype)
+            elif isinstance(action, exp.RenameColumn):
+                # The old name's entry no longer matches any column; the new
+                # name keeps DuckDB's (unsized) type either way.
+                lengths[action.this.name.upper()] = None
+            elif isinstance(action, exp.Drop) and _dropped_column_name(action):
+                lengths[str(_dropped_column_name(action)).upper()] = None
+
+        if not lengths:
+            return
+
+        database, schema = self._relation_target(alter.this)
+        if not database or not schema:
+            return
+
+        self._info_schema_manager.record_column_lengths(
+            database=database,
+            schema=schema,
+            table=table,
+            lengths=lengths,
+            replace=False,
+        )
+
+    def _relation_target(self, target: exp.Expression | None) -> tuple[str, str]:
+        """The (database, schema) a DDL target names, defaulted to the session."""
+        if isinstance(target, exp.Schema):
+            target = target.this
+        database = self._sf_conn.database or ""
+        schema = self._sf_conn.schema or ""
+        if isinstance(target, exp.Table):
+            catalog = target.args.get("catalog")
+            if isinstance(catalog, exp.Identifier):
+                database = catalog.name
+            qualifier = target.args.get("db")
+            if isinstance(qualifier, exp.Identifier):
+                schema = qualifier.name
+        return database, schema
+
+    def _schema_target(
+        self, expression: sqlglot.exp.Expression, fallback: str
+    ) -> tuple[str | None, str]:
+        """The (database, schema) a CREATE/DROP SCHEMA statement names.
+
+        For a schema target sqlglot puts the schema in `db` and the database in
+        `catalog`, leaving `this` empty - the opposite nesting to a table.
+
+        Snowflake folds unquoted identifiers to upper case, so the schema is
+        recorded the way a later reference will spell it.
+        """
+
+        def name_of(node: object) -> str | None:
+            if isinstance(node, sqlglot.exp.Identifier) and node.this:
+                return str(node.this) if node.quoted else str(node.this).upper()
+            return None
+
+        table = expression.find(sqlglot.exp.Table)
+        database = self._sf_conn.database
+        schema = fallback
+
+        if table is not None:
+            schema = name_of(table.args.get("db")) or schema
+            database = name_of(table.args.get("catalog")) or database
+
+        return database, schema
 
     def _generate_result(self, template: Template | str, **kwargs: Any) -> None:
         """
@@ -367,6 +615,7 @@ class Cursor:
                 current_warehouse=self._sf_conn.warehouse,
                 info_schema_manager=self._info_schema_manager,
                 session_variables=self._sf_conn._session_variables,
+                last_query_id=self._sf_conn.last_query_id,
                 session_parameters=self._sf_conn.session_parameters,
             )
         )
@@ -478,9 +727,11 @@ class Cursor:
                         self._sf_conn.use_schema(schema_name)
 
             self._generate_result(SQL_SUCCESS)
+            self._duck_description = self._duck_cur.description
             self._arrow_table = self._duck_cur.fetch_arrow_table()
             self._rowcount = self._arrow_table.num_rows
             self._sfqid = str(uuid.uuid4())
+            self._sf_conn.last_query_id = self._sfqid
             return
 
         if isinstance(transformed, exp.Select):
@@ -536,6 +787,25 @@ class Cursor:
                 msg=msg, errno=1003, sqlstate="42000"
             ) from None
 
+        if isinstance(transformed, exp.Alter) and isinstance(
+            transformed.this, exp.Table
+        ):
+            self._record_altered_lengths(transformed, transformed.this.name.upper())
+
+        if cmd == "DROP SCHEMA":
+            database, schema = self._schema_target(transformed, "")
+            if database and schema:
+                self._info_schema_manager.unregister_schema(
+                    database=database, schema=schema
+                )
+                if schema == "MAIN":
+                    # DuckDB's internal `main` survives the DROP, so its
+                    # contents have to go explicitly for the schema to look
+                    # empty afterwards.
+                    self._info_schema_manager.clear_schema(
+                        database=database, schema="main"
+                    )
+
         affected_count = None
 
         # Generate results for specific commands
@@ -560,10 +830,31 @@ class Cursor:
                 )
                 self._generate_result(SQL_CREATED_DATABASE, name=ident)
             elif cmd == "CREATE SCHEMA":
-                self._generate_result(SQL_CREATED_SCHEMA, name=ident)
+                database, schema = self._schema_target(transformed, ident)
+                if database:
+                    # MAIN is made idempotent during translation because DuckDB
+                    # owns a schema of that name; the duplicate check Snowflake
+                    # would have done therefore happens here.
+                    if (
+                        schema == "MAIN"
+                        and not transformed.args.get("exists")
+                        and self._info_schema_manager.has_registered_schema(
+                            database=database, schema=schema
+                        )
+                    ):
+                        raise snowflake.connector.errors.ProgrammingError(
+                            msg=f"Schema '{database}.{schema}' already exists.",
+                            errno=2002,
+                            sqlstate="42710",
+                        )
+                    self._info_schema_manager.register_schema(
+                        database=database, schema=schema
+                    )
+                self._generate_result(SQL_CREATED_SCHEMA, name=schema)
             elif cmd == "CREATE VIEW":
                 self._generate_result(SQL_CREATED_VIEW, name=ident)
             elif cmd == "CREATE TABLE":
+                self._record_declared_lengths(transformed, ident)
                 self._generate_result(SQL_CREATED_TABLE, name=ident)
             elif cmd == "CREATE FUNCTION":
                 self._generate_result(SQL_CREATED_FUNCTION, name=ident)
@@ -574,12 +865,14 @@ class Cursor:
                 self._sf_conn.use_schema(ident)
                 self._generate_result(SQL_SUCCESS)
 
+        self._duck_description = self._duck_cur.description
         self._arrow_table = self._duck_cur.fetch_arrow_table()
         # Fallback to num_rows ONLY if affected_count is explicitly None (it will be None for SELECTs, but 0 for DML)
         self._rowcount = (
             affected_count if affected_count is not None else self._arrow_table.num_rows
         )
         self._sfqid = str(uuid.uuid4())
+        self._sf_conn.last_query_id = self._sfqid
 
     def _apply_alter_session(self, expression: exp.Expression) -> None:
         """Record ALTER SESSION SET/UNSET so SHOW PARAMETERS can read it back.
@@ -752,7 +1045,9 @@ class Cursor:
             self._last_sql = None
             self._last_params = None
             self._is_closed = True
-            self._duck_cur.close()
+            # The DuckDB connection belongs to the session, not to this cursor.
+            self._arrow_table = None
+            self._duck_description = None
             return True
         except Exception:
             return None

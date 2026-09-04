@@ -82,10 +82,73 @@ def _object_construct(args: list[exp.Expression], keep_null: bool) -> exp.Expres
     return tree
 
 
+def _row_source_name(select: exp.Select) -> str | None:
+    """The name a DuckDB query uses to refer to its row as a struct.
+
+    That is the FROM clause's alias, or the table's own name when it has none.
+    Only a single source can be named this way; over a join, Snowflake's
+    ``OBJECT_CONSTRUCT(*)`` spans both sides and DuckDB has no equivalent.
+    """
+    # sqlglot renamed the argument to `from_`; accept both spellings so the
+    # lookup does not silently start returning None on an upgrade.
+    from_clause = select.args.get("from_") or select.args.get("from")
+    if not isinstance(from_clause, exp.From) or select.args.get("joins"):
+        return None
+    source = from_clause.this
+    alias = source.args.get("alias") if isinstance(source, exp.Expression) else None
+    if isinstance(alias, exp.TableAlias) and alias.this:
+        return str(alias.this.name)
+    if isinstance(alias, exp.Identifier):
+        return str(alias.name)
+    if isinstance(source, exp.Table):
+        return str(source.name)
+    if isinstance(source, exp.Subquery):
+        # An unaliased subquery has no name to refer to, so give it one.
+        name = "_snowduck_row"
+        source.set("alias", exp.TableAlias(this=exp.to_identifier(name)))
+        return name
+    return None
+
+
+def _expand_star_map(select: exp.Select) -> None:
+    """Rewrite every ``OBJECT_CONSTRUCT(*)`` in a SELECT onto its row struct."""
+    star_maps = list(select.find_all(exp.StarMap))
+    if not star_maps:
+        return
+
+    name = _row_source_name(select)
+    if name is None:
+        raise ValueError(
+            "OBJECT_CONSTRUCT(*) needs exactly one FROM source to read the row "
+            "from; name the columns explicitly instead"
+        )
+
+    for star_map in star_maps:
+        star_map.replace(
+            exp.Anonymous(
+                this="to_json", expressions=[exp.column(exp.to_identifier(name))]
+            )
+        )
+
+
 def preprocess_semi_structured(
     expression: exp.Expression, context: DialectContext
 ) -> exp.Expression:
     """Pre-process expression to transform OBJECT_CONSTRUCT/ARRAY_CONSTRUCT and strip Time Travel."""
+
+    # Snowflake's GET is two functions sharing a name: GET(array, index) reads
+    # an element (0-based), GET(object, key) reads a member. sqlglot parses
+    # both into GetExtract, whose DuckDB form is a bracket - and a bracket
+    # applied to an object raises "Expected ARRAY, but got OBJECT", so a string
+    # key becomes a JSON path instead.
+    if isinstance(expression, exp.GetExtract):
+        key = expression.expression
+        if isinstance(key, exp.Literal) and key.is_string:
+            return exp.Anonymous(
+                this="json_extract",
+                expressions=[expression.this, exp.Literal.string(f'$."{key.this}"')],
+            )
+        return exp.Bracket(this=expression.this, expressions=[key])
 
     # Handle JSONExtract - Snowflake parser converts GET_PATH to JSONExtract
     # We need to convert it to json_extract_string to get unquoted results
@@ -160,14 +223,12 @@ def preprocess_semi_structured(
             # DuckDB struct literal - which would not even parse.
             return _object_construct(new_args, keep_null=False)
 
-    # Handle OBJECT_CONSTRUCT(*) parsed as StarMap
-    if isinstance(expression, exp.StarMap):
-        # map(*) equivalent -> to_json(row(*))
-        # row(*) creates a struct with all cols
-        return exp.Anonymous(
-            this="to_json",
-            expressions=[exp.Anonymous(this="row", expressions=[exp.Star()])],
-        )
+    # OBJECT_CONSTRUCT(*) - every column of the row as one object. sqlglot
+    # parses it to StarMap. DuckDB has no expression that expands to the whole
+    # row, but naming the source in a value position produces its row struct,
+    # so the rewrite has to happen where the FROM clause is visible.
+    if isinstance(expression, exp.Select) and expression.find(exp.StarMap):
+        _expand_star_map(expression)
 
     # Handle explicit function calls (e.g. ARRAY_CONSTRUCT is parsed as exp.Array usually?)
     if isinstance(expression, exp.Anonymous):
@@ -245,13 +306,15 @@ def preprocess_semi_structured(
                     ),
                 )
         elif fname == "GET" and len(expression.expressions) == 2:
-            # GET(array, index) -> array[index]
-            # Snowflake GET uses 0-based indexing
-            # sqlglot's Bracket auto-converts 0-based to 1-based for DuckDB
-            # So we just pass the index directly
-            array = expression.expressions[0]
-            index = expression.expressions[1]
-            return exp.Bracket(this=array, expressions=[index])
+            # sqlglot parses `GET(...)` into GetExtract, handled above; this
+            # only catches a GET that reached here as an anonymous call.
+            subject, key = expression.expressions
+            if isinstance(key, exp.Literal) and key.is_string:
+                return exp.Anonymous(
+                    this="json_extract",
+                    expressions=[subject, exp.Literal.string(f'$."{key.this}"')],
+                )
+            return exp.Bracket(this=subject, expressions=[key])
         elif fname == "ARRAY_SLICE":
             # ARRAY_SLICE(array, start, end) -> list_slice(array, start+1, end+1)
             # Snowflake uses 0-based indexing, DuckDB list_slice uses 1-based

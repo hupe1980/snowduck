@@ -159,6 +159,19 @@ CASES: list[tuple[str, str, object]] = [
         "SELECT ARRAY_CONTAINS('two', ARRAY_CONSTRUCT(1, 'two'))",
         True,
     ),
+    # -- Documented quirks --------------------------------------------------
+    # "The similarity computation is case-insensitive."
+    (
+        "jarowinkler_is_case_insensitive",
+        "SELECT JAROWINKLER_SIMILARITY('ABC', 'abd') = JAROWINKLER_SIMILARITY('abc', 'abd')",
+        True,
+    ),
+    ("jarowinkler_is_a_percentage", "SELECT JAROWINKLER_SIMILARITY('abc', 'abc')", 100),
+    # BOOLAND rounds floating point, so a fraction below 0.5 counts as zero -
+    # the docs show BOOLAND(-0.4, 5) returning FALSE.
+    ("booland_rounds_fractions", "SELECT BOOLAND(-0.4, 5)", False),
+    ("booland_non_zero", "SELECT BOOLAND(2, 3)", True),
+    ("boolxor", "SELECT BOOLXOR(1, 0)", True),
     # -- Predicates ---------------------------------------------------------
     ("like_any", "SELECT 'abc' LIKE ANY ('a%', 'z%')", True),
     ("like_any_no_match", "SELECT 'abc' LIKE ANY ('y%', 'z%')", False),

@@ -139,6 +139,19 @@ def test_dbt_test(dbt_server):
     assert result.returncode == 0, f"dbt test failed: {result.stderr}"
 ```
 
+## Schema Names
+
+dbt lists a schema with `SHOW OBJECTS` and then looks each relation up under the
+upper-cased name its own `Relation` renders to, so SnowDuck folds unquoted
+identifiers to upper case exactly as Snowflake does.
+
+{: .note }
+> This includes a schema named `MAIN`, which is a common dbt target. DuckDB has
+> an internal schema called `main` that cannot be renamed, so SnowDuck tracks
+> the `CREATE SCHEMA` and reports it as `MAIN`. Earlier releases returned
+> `"MY_DB"."main"."MY_MODEL"` here, which passed on a first run and then failed
+> every model on the second with *"dbt found an approximate match"*.
+
 ## Supported dbt Features
 
 | Feature | Status | Notes |
@@ -169,6 +182,8 @@ def test_dbt_test(dbt_server):
 | Column metadata | ✅ | `DESCRIBE TABLE` |
 | `dbt docs generate` | ✅ | Catalog built from `INFORMATION_SCHEMA.TABLES` / `.COLUMNS` |
 | `query_tag` config | ✅ | `ALTER SESSION SET` round-trips through `SHOW PARAMETERS` |
+| `persist_docs` config | ✅ | Model and column descriptions become comments, read back through `INFORMATION_SCHEMA` and `DESCRIBE TABLE`. Snowflake's multi-column `ALTER TABLE ... ALTER <col> COMMENT $$...$$` form - which sqlglot cannot parse - is re-read by SnowDuck |
+| `contract` / constraints | ⚠️ | `PRIMARY KEY` and `UNIQUE` are recorded and reported through `INFORMATION_SCHEMA.TABLE_CONSTRAINTS`; `ALTER TABLE ... ADD`/`DROP CONSTRAINT` is accepted and ignored, as Snowflake does not enforce them either |
 | **Macros** | | |
 | `{{ ref() }}` | ✅ | |
 | `{{ source() }}` | ✅ | |

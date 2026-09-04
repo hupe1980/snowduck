@@ -11,6 +11,38 @@ from sqlglot import exp
 
 from ..context import DialectContext
 
+# Snowflake accepts a numeric UTC offset written with a space and no colon
+# ("2024-01-15 10:11:12 +0200"), which is how its own exports and
+# TO_TIMESTAMP_TZ render one. DuckDB reads the offset as a timezone *name* and
+# fails with "Unknown TimeZone '+0200'", so the literal is normalised to the
+# ISO spelling it does understand.
+_UTC_OFFSET = re.compile(
+    r"^(?P<stamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)"
+    r"\s*(?P<sign>[+-])(?P<hours>\d{2}):?(?P<minutes>\d{2})$"
+)
+
+
+def _normalise_utc_offset(value: str) -> str:
+    match = _UTC_OFFSET.match(value.strip())
+    if match is None:
+        return value
+    return (
+        f"{match.group('stamp')}{match.group('sign')}"
+        f"{match.group('hours')}:{match.group('minutes')}"
+    )
+
+
+def preprocess_timestamp_literals(
+    expression: exp.Expression, context: DialectContext
+) -> exp.Expression:
+    """Rewrite timestamp literals whose UTC offset DuckDB cannot read."""
+    if isinstance(expression, exp.Literal) and expression.is_string:
+        text = str(expression.this)
+        normalised = _normalise_utc_offset(text)
+        if normalised != text:
+            return exp.Literal.string(normalised)
+    return expression
+
 
 def _looks_like_date(value: str) -> bool:
     """Check if a string literal looks like a date."""

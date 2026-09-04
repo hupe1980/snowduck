@@ -14,3 +14,5 @@ class DialectContext:
     session_variables: dict[str, str] = field(default_factory=dict)
     # Session parameters (ALTER SESSION SET param = value), keyed upper case
     session_parameters: dict[str, str] = field(default_factory=dict)
+    # Id of the last statement run on this session, for LAST_QUERY_ID()
+    last_query_id: str | None = None

@@ -10,11 +10,23 @@ SELECT
     'COLUMN' AS "kind",
     CASE WHEN is_nullable = 'YES' THEN 'Y' ELSE 'N' END AS "null?",
     column_default AS "default",
-    'N' AS "primary key",
-    'N' AS "unique key",
+    CASE WHEN EXISTS (
+        SELECT 1 FROM duckdb_constraints() k
+        WHERE k.constraint_type = 'PRIMARY KEY'
+          AND upper(k.database_name) = upper('{database}')
+          AND upper(k.table_name) = upper('{table}')
+          AND list_contains(k.constraint_column_names, column_name)
+    ) THEN 'Y' ELSE 'N' END AS "primary key",
+    CASE WHEN EXISTS (
+        SELECT 1 FROM duckdb_constraints() k
+        WHERE k.constraint_type = 'UNIQUE'
+          AND upper(k.database_name) = upper('{database}')
+          AND upper(k.table_name) = upper('{table}')
+          AND list_contains(k.constraint_column_names, column_name)
+    ) THEN 'Y' ELSE 'N' END AS "unique key",
     NULL::VARCHAR AS "check",
     NULL::VARCHAR AS "expression",
-    NULL::VARCHAR AS "comment",
+    comment AS "comment",
     NULL::VARCHAR AS "policy name",
     NULL::JSON AS "privacy domain",
 FROM {account_catalog_name}.{info_schema_name}._columns

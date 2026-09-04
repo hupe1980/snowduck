@@ -136,3 +136,55 @@ def test_reset_clears_existing_database():
             assert cursor.fetchone()[0] == "fresh"
 
             conn.close()
+
+
+def test_created_databases_persist():
+    """CREATE DATABASE must survive a restart, not silently be in-memory.
+
+    Each Snowflake database is its own DuckDB catalog. They used to be attached
+    as ':memory:', so a file-backed session lost every database created at
+    runtime - along with all its schemas and tables - while still reporting the
+    session as persistent.
+    """
+    import snowflake.connector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_file = str(Path(tmpdir) / "persist.duckdb")
+
+        with patch_snowflake(db_file=db_file):
+            with snowflake.connector.connect() as conn:
+                cur = conn.cursor()
+                cur.execute("CREATE DATABASE analytics")
+                cur.execute("CREATE SCHEMA analytics.MAIN")
+                cur.execute("CREATE TABLE analytics.MAIN.events (id INT)")
+                cur.execute("INSERT INTO analytics.MAIN.events VALUES (7)")
+
+        with patch_snowflake(db_file=db_file):
+            with snowflake.connector.connect() as conn:
+                cur = conn.cursor()
+                cur.execute("SHOW DATABASES")
+                assert "ANALYTICS" in {row[1] for row in cur.fetchall()}
+
+                cur.execute("SHOW SCHEMAS IN DATABASE analytics")
+                assert "MAIN" in {row[1] for row in cur.fetchall()}
+
+                cur.execute("SELECT id FROM analytics.MAIN.events")
+                assert cur.fetchall() == [(7,)]
+
+
+def test_reset_clears_created_databases():
+    """A reset must not leave a previous run's databases behind."""
+    import snowflake.connector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_file = str(Path(tmpdir) / "persist.duckdb")
+
+        with patch_snowflake(db_file=db_file):
+            with snowflake.connector.connect() as conn:
+                conn.cursor().execute("CREATE DATABASE stale")
+
+        with patch_snowflake(db_file=db_file, reset=True):
+            with snowflake.connector.connect() as conn:
+                cur = conn.cursor()
+                cur.execute("SHOW DATABASES")
+                assert "STALE" not in {row[1] for row in cur.fetchall()}

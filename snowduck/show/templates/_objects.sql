@@ -3,7 +3,9 @@
 SELECT
     TO_TIMESTAMP(0)::TIMESTAMPTZ AS created_on,
     t.database_name AS database_name,
-    t.schema_name AS schema_name,
+    -- DuckDB's internal `main` is Snowflake's MAIN; it cannot be renamed,
+    -- so the Snowflake-visible name is mapped here.
+    CASE WHEN t.schema_name = 'main' THEN 'MAIN' ELSE t.schema_name END AS schema_name,
     t.table_name AS name,
     'TABLE' AS kind,
     t.comment AS comment,
@@ -20,7 +22,7 @@ UNION ALL
 SELECT
     TO_TIMESTAMP(0)::TIMESTAMPTZ,
     v.database_name,
-    v.schema_name,
+    CASE WHEN v.schema_name = 'main' THEN 'MAIN' ELSE v.schema_name END,
     v.view_name,
     'VIEW',
     v.comment,

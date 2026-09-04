@@ -23,15 +23,16 @@ SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavi
 
 | Category | Functions |
 |----------|-----------|
-| **DDL Operations** | CREATE/DROP DATABASE, SCHEMA, TABLE, VIEW, SEQUENCE, STAGE |
-| **DML Operations** | INSERT, UPDATE, DELETE, MERGE |
+| **DDL Operations** | CREATE/DROP DATABASE, SCHEMA, TABLE, VIEW, SEQUENCE, STAGE; ALTER TABLE ADD/DROP/RENAME/ALTER COLUMN; TRUNCATE TABLE [IF EXISTS] |
+| **DML Operations** | INSERT, UPDATE, DELETE, MERGE, INSERT OVERWRITE |
+| **Comments** | Inline `COMMENT = '...'` / `COMMENT '...'` on tables, views and columns, and `COMMENT ON` - read back through SHOW and INFORMATION_SCHEMA (dbt `persist_docs`) |
 | **Advanced SQL** | CTEs, JOINs, subqueries, CASE, QUALIFY, LIKE ANY/ALL |
 | **SQL UDFs** | CREATE FUNCTION ... AS $$ ... $$ (scalar and table) |
 | **Table Functions** | TABLE(...), FLATTEN, SPLIT_TO_TABLE, LATERAL FLATTEN |
 | **Session Variables** | SET/SELECT \$variable syntax |
 | **Session Parameters** | ALTER SESSION SET/UNSET, SHOW PARAMETERS |
 | **Catalog (SHOW)** | OBJECTS, TABLES, VIEWS, SCHEMAS, DATABASES, COLUMNS, [USER] FUNCTIONS, SEQUENCES, STAGES, WAREHOUSES, PARAMETERS, VARIABLES - with TERSE, LIKE, STARTS WITH, LIMIT ... FROM |
-| **Information Schema** | Per-database INFORMATION_SCHEMA: DATABASES, SCHEMATA, TABLES, VIEWS, COLUMNS, FUNCTIONS, SEQUENCES |
+| **Information Schema** | Per-database INFORMATION_SCHEMA: DATABASES, SCHEMATA, TABLES, VIEWS, COLUMNS, FUNCTIONS, SEQUENCES, TABLE_CONSTRAINTS, KEY_COLUMN_USAGE, REFERENTIAL_CONSTRAINTS, ENABLED_ROLES, and more |
 
 ### Function Support
 
@@ -43,16 +44,16 @@ SnowDuck is a lightweight, in-memory SQL engine that emulates Snowflake's behavi
 | **Aggregate** | COUNT, SUM, AVG, MIN, MAX, MEDIAN, LISTAGG, ANY_VALUE, KURTOSIS, SKEW, COVAR_POP, COVAR_SAMP |
 | **Window** | ROW_NUMBER, RANK, DENSE_RANK, LEAD, LAG, FIRST_VALUE, LAST_VALUE |
 | **JSON** | PARSE_JSON, OBJECT_CONSTRUCT, OBJECT_CONSTRUCT_KEEP_NULL, OBJECT_INSERT, OBJECT_DELETE, OBJECT_PICK, OBJECT_AGG, GET_PATH, TRY_PARSE_JSON, OBJECT_KEYS, CHECK_JSON, TO_JSON, TO_OBJECT |
-| **VARIANT** | IS_ARRAY, IS_OBJECT, IS_NULL_VALUE, IS_INTEGER, IS_DOUBLE, IS_BOOLEAN, IS_VARCHAR, AS_VARCHAR, AS_INTEGER, AS_DOUBLE, AS_BOOLEAN, AS_DATE, TYPEOF |
+| **VARIANT** | IS_ARRAY, IS_OBJECT, IS_NULL_VALUE, IS_INTEGER, IS_DOUBLE, IS_DECIMAL, IS_REAL, IS_BOOLEAN, IS_VARCHAR, IS_CHAR, IS_DATE, IS_TIME, IS_TIMESTAMP_NTZ/LTZ/TZ, IS_BINARY, AS_VARCHAR, AS_CHAR, AS_INTEGER, AS_DOUBLE, AS_REAL, AS_DECIMAL, AS_NUMBER, AS_BOOLEAN, AS_ARRAY, AS_OBJECT, AS_DATE, AS_TIME, AS_TIMESTAMP_NTZ/LTZ/TZ, AS_BINARY, GET, GET_PATH, MAP_CAT, TYPEOF |
 | **Array** | ARRAY_CONSTRUCT, ARRAY_SIZE, ARRAY_CONTAINS, FLATTEN, ARRAY_SLICE, ARRAY_CAT, ARRAY_APPEND, ARRAY_PREPEND, ARRAY_SORT, ARRAY_REVERSE, ARRAY_MIN, ARRAY_MAX, ARRAY_SUM, ARRAYS_OVERLAP, ARRAY_DISTINCT, ARRAY_INTERSECTION, ARRAY_EXCEPT |
 | **Conditional** | NVL, NVL2, DECODE, IFF, COALESCE, NULLIF, EQUAL_NULL, ZEROIFNULL, NULLIFZERO, BOOLAND, BOOLOR, BOOLXOR, BOOLNOT |
-| **Conversion** | TO_CHAR, TO_NUMBER, TO_DECIMAL, TO_NUMERIC, TO_BOOLEAN, TO_DATE, TRY_CAST, TRY_TO_NUMBER, TRY_TO_DECIMAL, TRY_TO_DATE, TRY_TO_TIMESTAMP, TRY_TO_BOOLEAN |
+| **Conversion** | TO_CHAR, TO_VARCHAR (with Snowflake's numeric format models), TO_NUMBER, TO_DECIMAL, TO_NUMERIC, TO_BOOLEAN, TO_DATE, TO_TIME, TIME, TO_BINARY, TRY_CAST, TRY_TO_NUMBER, TRY_TO_DECIMAL, TRY_TO_DATE, TRY_TO_TIMESTAMP, TRY_TO_BOOLEAN, TRY_TO_BINARY |
 | **Regex** | REGEXP_LIKE, RLIKE, REGEXP_SUBSTR, REGEXP_SUBSTR_ALL, REGEXP_REPLACE, REGEXP_COUNT, REGEXP_INSTR |
 | **Hash** | MD5, SHA1, SHA2, SHA256, HASH |
 | **Encoding** | BASE64_ENCODE, BASE64_DECODE_STRING, HEX_ENCODE, HEX_DECODE_STRING |
 | **Bitwise** | BITAND, BITOR, BITXOR, BITNOT, BITAND_AGG, BITOR_AGG, BITXOR_AGG |
 | **Boolean Agg** | BOOLAND_AGG, BOOLOR_AGG |
-| **Utility** | UUID_STRING, TYPEOF, HLL |
+| **Utility** | UUID_STRING, TYPEOF, HLL, HLL_ACCUMULATE, HLL_COMBINE, HLL_ESTIMATE, GET_DDL, COLLATION, OCTET_LENGTH |
 | **Context** | CURRENT_VERSION, CURRENT_ACCOUNT, CURRENT_CLIENT, CURRENT_SESSION, CURRENT_REGION, CURRENT_ROLE, CURRENT_DATABASE, CURRENT_SCHEMA, CURRENT_WAREHOUSE |
 
 ### Snowflake Semantics, Not Just Snowflake Syntax
@@ -79,6 +80,12 @@ they are pinned by an executable conformance suite
 | `OBJECT_CONSTRUCT` drops NULLs top-level only | nested nulls survive |
 | Arrays are heterogeneous | `ARRAY_CONSTRUCT(1,'two')` → `[1,"two"]` |
 | A format model sets decoration, not scale | `TO_NUMBER('$1,234.56','$9,999.99')` → `1235` |
+| `TO_CHAR`'s format model *is* the layout | `TO_CHAR(1234.56,'$9,999.99')` → `' $1,234.56'` |
+| A value too wide for the model renders as `#` | `TO_CHAR(12345.67,'9999.99')` → `'########'` |
+| `AS_<type>` checks the stored type, not casts | `AS_INTEGER(PARSE_JSON('"5"'))` → `NULL` |
+| `GET` reads object members as well as elements | `GET(PARSE_JSON('{"a":7}'),'a')` → `7` |
+| `OBJECT_CONSTRUCT(*)` builds an object per row | `{"A":1,"B":"x"}` |
+| Inline comments reach the catalog | `CREATE TABLE t (id INT COMMENT 'c')` → readable via INFORMATION_SCHEMA |
 
 ### Snowflake Identifier Semantics
 
@@ -181,7 +188,8 @@ with snowflake.connector.connect() as conn:
 # In-memory (default) - fast, isolated
 start_patch_snowflake()
 
-# File-based - persistent across restarts
+# File-based - persistent across restarts, including CREATE DATABASE
+# (each database is stored beside it as my_data.<NAME>.duckdb)
 start_patch_snowflake(db_file='my_data.duckdb')
 
 # Fresh start - reset existing data

@@ -21,6 +21,20 @@ _DATABASE_SCOPED_VIEWS = {
     "VIEWS": "_views",
     "FUNCTIONS": "_functions",
     "SEQUENCES": "_sequences",
+    "TABLE_CONSTRAINTS": "_table_constraints",
+    "KEY_COLUMN_USAGE": "_key_column_usage",
+    "REFERENTIAL_CONSTRAINTS": "_referential_constraints",
+    "INFORMATION_SCHEMA_CATALOG_NAME": "_information_schema_catalog_name",
+    "APPLICABLE_ROLES": "_applicable_roles",
+    "ENABLED_ROLES": "_enabled_roles",
+    "TABLE_PRIVILEGES": "_table_privileges",
+    "USAGE_PRIVILEGES": "_usage_privileges",
+    "OBJECT_PRIVILEGES": "_object_privileges",
+    "VIEW_TABLE_USAGE": "_view_table_usage",
+    "EXTERNAL_TABLES": "_external_tables",
+    "FILE_FORMATS": "_file_formats",
+    "PROCEDURES": "_procedures",
+    "LOAD_HISTORY": "_load_history",
 }
 
 #: DATABASES is account-wide even in Snowflake, so it has one backing view.

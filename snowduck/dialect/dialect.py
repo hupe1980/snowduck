@@ -17,6 +17,7 @@ subclassed from Python. Customisation is done by overriding
 :meth:`Dialect.generate`, which stays interpreted.
 """
 
+import logging
 from collections import OrderedDict
 from typing import Any
 
@@ -34,6 +35,7 @@ from .preprocess import (
     preprocess_generator,
     preprocess_identifier,
     preprocess_info_schema,
+    preprocess_number_formats,
     preprocess_regexp,
     preprocess_semi_structured,
     preprocess_seq_functions,
@@ -41,28 +43,34 @@ from .preprocess import (
     preprocess_special_expressions,
     preprocess_syntax,
     preprocess_system_calls,
+    preprocess_timestamp_literals,
     preprocess_variables,
 )
 from .transforms import (
+    transform_alter,
     transform_command,
     transform_copy,
     transform_create,
     transform_describe,
+    transform_drop,
     transform_set,
     transform_show,
+    transform_truncate,
     transform_use,
 )
 
-# Applied in order. Ordering matters in three places: case folding runs first,
+# Applied in order. Ordering matters in four places: case folding runs first,
 # so it only ever sees identifiers the user wrote and not ones a later rewrite
 # synthesised; date handling must run before `special_expressions`, so string
-# literals are already cast to DATE; and `syntax` must run before `functions`,
-# so rewritten nodes are seen by both.
+# literals are already cast to DATE; `syntax` must run before `functions`, so
+# rewritten nodes are seen by both; and `number_formats` must run before
+# `date_functions`, which would otherwise cast TO_CHAR's numeric argument.
 _PREPROCESSORS = (
     preprocess_case_folding,
     preprocess_variables,
     preprocess_identifier,
     preprocess_info_schema,
+    preprocess_number_formats,
     preprocess_current_schema,
     preprocess_session_info,
     preprocess_system_calls,
@@ -73,6 +81,7 @@ _PREPROCESSORS = (
     preprocess_bitwise,
     preprocess_regexp,
     preprocess_date_functions,
+    preprocess_timestamp_literals,
     preprocess_syntax,
     preprocess_functions,
     preprocess_special_expressions,
@@ -99,7 +108,36 @@ _STATEMENT_TRANSFORMS: dict[type[exp.Expression], Any] = {
     exp.Copy: transform_copy,
     exp.Set: transform_set,
     exp.Command: transform_command,
+    exp.Alter: transform_alter,
+    exp.Drop: transform_drop,
+    exp.TruncateTable: transform_truncate,
 }
+
+
+_SQLGLOT_LOGGER = logging.getLogger("sqlglot")
+
+
+class _Quiet(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return False
+
+
+def _rendered_quietly(expression: exp.Expression) -> str:
+    """Render an expression back to Snowflake, without sqlglot's commentary.
+
+    This is an internal round trip - the cache key - not something the caller
+    ever sees, so a warning sqlglot's *Snowflake* generator raises about its own
+    output is pure noise. `ALTER TABLE ... ALTER COLUMN c SET NOT NULL` is one:
+    it warns "Unsupported ALTER COLUMN syntax" while SnowDuck translates the
+    statement correctly, so the message only teaches the reader to ignore
+    warnings that do matter.
+    """
+    quiet = _Quiet()
+    _SQLGLOT_LOGGER.addFilter(quiet)
+    try:
+        return str(expression.sql(dialect="snowflake"))
+    finally:
+        _SQLGLOT_LOGGER.removeFilter(quiet)
 
 
 class Dialect(DuckDB):  # type: ignore[misc]
@@ -168,7 +206,7 @@ class Dialect(DuckDB):  # type: ignore[misc]
 
     @classmethod
     def sql_with_cache(cls, expression: exp.Expression, dialect: "Dialect") -> str:
-        snowflake_sql = expression.sql(dialect="snowflake")
+        snowflake_sql = _rendered_quietly(expression)
 
         # Don't cache queries with variable substitutions (they can change frequently)
         has_variables = bool(

@@ -46,6 +46,10 @@ format:
 mypy:
     mypy --strict snowduck
 
+# Report where sqlglot has caught up and a local rewrite can be deleted
+audit-upstream:
+    python scripts/audit_upstream.py
+
 # Run all quality checks (lint, format check, mypy, test)
 check: lint mypy test
 

@@ -32,7 +32,9 @@ class Connector:
         register_macros(self._duck_conn)
 
         # Create shared InfoSchemaManager
-        self._info_schema_manager = InfoSchemaManager(duck_conn=self._duck_conn)
+        self._info_schema_manager = InfoSchemaManager(
+            duck_conn=self._duck_conn, storage=self._db_file
+        )
 
     def connect(
         self,

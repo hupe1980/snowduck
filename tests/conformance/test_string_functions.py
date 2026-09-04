@@ -26,12 +26,25 @@ def test_parse_url_parameters_are_an_object(conn):
     assert parsed["parameters"] == {"q": "hello world", "n": "2"}
 
 
-def test_parse_url_without_query(conn):
+def test_parse_url_matches_the_documented_example(conn):
+    """Snowflake's own example output for a bare URL.
+
+    Absent components are null, not empty strings - except `path`, which the
+    documentation shows as "".
+    """
     with conn.cursor() as cur:
-        cur.execute("SELECT PARSE_URL('https://ex.com/p')")
+        cur.execute("SELECT PARSE_URL('https://www.snowflake.com/')")
         parsed = json.loads(cur.fetchone()[0])
 
-    assert parsed["parameters"] == {}
+    assert parsed == {
+        "fragment": None,
+        "host": "www.snowflake.com",
+        "parameters": None,
+        "path": "",
+        "port": None,
+        "query": None,
+        "scheme": "https",
+    }
 
 
 def test_collate_case_insensitive(conn):

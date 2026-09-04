@@ -177,6 +177,7 @@ def describe_as_result_metadata(
     database: str | None = None,
     schema: str | None = None,
     table: str | None = None,
+    overrides: dict[str, dict[str, int | str | None]] | None = None,
 ) -> list[ResultMetadata]:
     """
     Convert describe results to Snowflake-compatible result metadata.
@@ -191,5 +192,7 @@ def describe_as_result_metadata(
     """
     return [
         ResultMetadata.from_column(cast(dict[str, Any], c))
-        for c in describe_as_rowtype(describe_results, database, schema, table)
+        for c in describe_as_rowtype(
+            describe_results, database, schema, table, overrides
+        )
     ]

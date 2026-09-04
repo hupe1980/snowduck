@@ -112,6 +112,43 @@ def _width_bucket(expression: exp.WidthBucket) -> exp.Expression:
     )
 
 
+# Snowflake: "If date_or_time_part is day or larger (for example, month, year),
+# the function returns a DATE value" - but only when the input is itself a DATE.
+# Anything smaller returns TIMESTAMP_NTZ.
+_DATE_PRESERVING_UNITS = frozenset(
+    {"DAY", "DAYOFMONTH", "WEEK", "WEEKISO", "MONTH", "QUARTER", "YEAR", "YEAROFWEEK"}
+)
+
+
+def _is_date_valued(node: exp.Expression | None) -> bool:
+    """Whether an expression is statically known to be a DATE.
+
+    Only the forms that say so on their face are recognised; the type of a bare
+    column is not known at translation time, so `DATEADD` over one keeps
+    DuckDB's TIMESTAMP result.
+    """
+    if isinstance(node, (exp.Cast, exp.TryCast)):
+        return bool(node.to and node.to.this == exp.DataType.Type.DATE)
+    return isinstance(node, (exp.CurrentDate, exp.Date, exp.DateStrToDate))
+
+
+def _date_add_result(expression: exp.DateAdd) -> exp.Expression:
+    """Keep DATEADD's result a DATE when Snowflake would.
+
+    DuckDB promotes `DATE + INTERVAL` to TIMESTAMP, so a model column that
+    should be a DATE came back as a timestamp.
+    """
+    unit = expression.args.get("unit")
+    unit_name = (
+        unit.name if isinstance(unit, exp.Expression) else str(unit or "")
+    ).upper()
+    if unit_name not in _DATE_PRESERVING_UNITS or not _is_date_valued(expression.this):
+        return expression
+    if isinstance(expression.parent, exp.Cast):
+        return expression
+    return exp.Cast(this=expression, to=exp.DataType.build("DATE"))
+
+
 def preprocess_special_expressions(
     expression: exp.Expression, context: DialectContext
 ) -> exp.Expression:
@@ -140,6 +177,9 @@ def preprocess_special_expressions(
             return exp.TryCast(this=value, to=target)
         return exp.Cast(this=value, to=target)
 
+    if isinstance(expression, exp.DateAdd):
+        return _date_add_result(expression)
+
     if isinstance(expression, exp.ToVariant):
         # Snowflake VARIANT is modelled as DuckDB JSON.
         return exp.Cast(this=expression.this, to=exp.DataType.build("JSON"))
@@ -153,13 +193,6 @@ def preprocess_special_expressions(
             this="repeat",
             expressions=[exp.Literal.string(" "), expression.this],
         )
-
-    if isinstance(expression, exp.AddMonths):
-        # ADD_MONTHS(date, months) -> date + INTERVAL months MONTH
-        date_expr = expression.this
-        months = expression.expression
-        interval = exp.Interval(this=months, unit=exp.Var(this="MONTH"))
-        return exp.Add(this=date_expr, expression=interval)
 
     if isinstance(expression, exp.ObjectInsert):
         # OBJECT_INSERT(obj, key, value) -> json_merge_patch(obj, json_object(key, value))

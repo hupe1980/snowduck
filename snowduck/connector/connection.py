@@ -1,3 +1,4 @@
+import threading
 from types import TracebackType
 from typing import Any, Iterable, Self
 
@@ -26,6 +27,12 @@ class Connection:
     ) -> None:
         self._duck_conn = duck_conn
         self._info_schema_manager = info_schema_manager
+        # Every cursor of this session shares one DuckDB connection so that a
+        # transaction spans the session, as it does in Snowflake. That makes
+        # the connection shared mutable state, so statement execution is
+        # serialised here - re-entrant because a statement may run nested
+        # helper queries while translating.
+        self._lock = threading.RLock()
         self._is_closed = False
         self._owns_duck_conn = (
             owns_duck_conn  # If True, we close the DuckDB conn on close()
@@ -81,6 +88,20 @@ class Connection:
     def autocommit(self, _mode: bool) -> None:
         pass
 
+    @property
+    def lock(self) -> "threading.RLock":
+        """Guards the session's DuckDB connection against concurrent use."""
+        return self._lock
+
+    @property
+    def last_query_id(self) -> str | None:
+        """Id of the most recent statement run on this session."""
+        return getattr(self, "_last_query_id", None)
+
+    @last_query_id.setter
+    def last_query_id(self, value: str | None) -> None:
+        self._last_query_id = value
+
     def cursor(self, cursor_class: type[SnowflakeCursor] = SnowflakeCursor) -> Cursor:
         """
         Returns a new Cursor object for executing queries.
@@ -94,7 +115,9 @@ class Connection:
             sf_conn=self,
             duck_conn=self._duck_conn,
             info_schema_manager=self._info_schema_manager,
-            use_dict_result=cursor_class == DictCursor,
+            # DictCursor is a subclass, so identity would narrow away under
+            # the declared type; issubclass also covers a user subclass of it.
+            use_dict_result=issubclass(cursor_class, DictCursor),
         )
 
     def execute_string(

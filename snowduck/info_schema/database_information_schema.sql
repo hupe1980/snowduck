@@ -7,6 +7,7 @@
 -- them (see snowduck.dialect.preprocess.info_schema).
 CREATE SCHEMA IF NOT EXISTS {database}.{info_schema_name};
 
+
 -- INFORMATION_SCHEMA.COLUMNS
 CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._columns AS
 SELECT *
@@ -17,8 +18,9 @@ WHERE table_catalog = '{database}';
 CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._schemata AS
 SELECT
     s.database_name AS catalog_name,
-    CASE WHEN s.schema_name = '{info_schema_name}'
-         THEN 'INFORMATION_SCHEMA' ELSE s.schema_name END AS schema_name,
+    CASE WHEN s.schema_name = '{info_schema_name}' THEN 'INFORMATION_SCHEMA'
+         WHEN s.schema_name = 'main' THEN 'MAIN'
+         ELSE s.schema_name END AS schema_name,
     'SYSADMIN' AS schema_owner,
     'NO' AS is_transient,
     'NO' AS is_managed_access,
@@ -31,8 +33,13 @@ SELECT
     s.comment AS comment
 FROM duckdb_schemas() s
 WHERE s.database_name = '{database}'
-  AND NOT s.internal
-  AND s.schema_name <> 'main';
+  AND (
+        (NOT s.internal AND s.schema_name <> 'main')
+        -- DuckDB's internal `main` is Snowflake's MAIN, but only once asked for.
+        OR (s.schema_name = 'main' AND EXISTS (
+              SELECT 1 FROM {account_catalog_name}.{info_schema_name}._created_schemas c
+              WHERE c.database_name = '{database}' AND c.schema_name = 'MAIN'))
+  );
 
 -- INFORMATION_SCHEMA.TABLES. `row_count` is DuckDB's estimate; `bytes`,
 -- `clustering_key` and the clone/iceberg flags have no local equivalent and
@@ -40,7 +47,7 @@ WHERE s.database_name = '{database}'
 CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._tables AS
 SELECT
     t.database_name AS table_catalog,
-    t.schema_name AS table_schema,
+    CASE WHEN t.schema_name = 'main' THEN 'MAIN' ELSE t.schema_name END AS table_schema,
     t.table_name AS table_name,
     'SYSADMIN' AS table_owner,
     CASE WHEN t.temporary THEN 'TEMPORARY TABLE' ELSE 'BASE TABLE' END AS table_type,
@@ -74,7 +81,7 @@ WHERE t.database_name = '{database}'
 UNION ALL
 SELECT
     v.database_name,
-    v.schema_name,
+    CASE WHEN v.schema_name = 'main' THEN 'MAIN' ELSE v.schema_name END AS schema_name,
     v.view_name,
     'SYSADMIN',
     'VIEW',
@@ -110,7 +117,7 @@ WHERE v.database_name = '{database}'
 CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._views AS
 SELECT
     database_name AS table_catalog,
-    schema_name AS table_schema,
+    CASE WHEN schema_name = 'main' THEN 'MAIN' ELSE schema_name END AS table_schema,
     view_name AS table_name,
     'SYSADMIN' AS table_owner,
     sql AS view_definition,
@@ -133,7 +140,7 @@ WHERE database_name = '{database}'
 CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._functions AS
 SELECT
     f.database_name AS function_catalog,
-    f.schema_name AS function_schema,
+    CASE WHEN f.schema_name = 'main' THEN 'MAIN' ELSE f.schema_name END AS function_schema,
     f.function_name AS function_name,
     'SYSADMIN' AS function_owner,
     '(' || COALESCE(
@@ -170,7 +177,7 @@ WHERE f.database_name = '{database}'
 CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._sequences AS
 SELECT
     s.database_name AS sequence_catalog,
-    s.schema_name AS sequence_schema,
+    CASE WHEN s.schema_name = 'main' THEN 'MAIN' ELSE s.schema_name END AS sequence_schema,
     s.sequence_name AS sequence_name,
     'SYSADMIN' AS sequence_owner,
     'NUMBER' AS data_type,
@@ -189,3 +196,196 @@ SELECT
 FROM duckdb_sequences() s
 WHERE s.database_name = '{database}'
   AND s.schema_name <> '{info_schema_name}';
+
+-- INFORMATION_SCHEMA.TABLE_CONSTRAINTS. Snowflake records constraints as
+-- metadata and does not enforce them; DuckDB does enforce them, so the rows
+-- here are real. NOT NULL is excluded: Snowflake reports nullability through
+-- COLUMNS.is_nullable, not as a constraint.
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._table_constraints AS
+SELECT
+    c.database_name AS constraint_catalog,
+    CASE WHEN c.schema_name = 'main' THEN 'MAIN' ELSE c.schema_name END AS constraint_schema,
+    c.constraint_name AS constraint_name,
+    c.database_name AS table_catalog,
+    CASE WHEN c.schema_name = 'main' THEN 'MAIN' ELSE c.schema_name END AS table_schema,
+    c.table_name AS table_name,
+    c.constraint_type AS constraint_type,
+    'NO' AS is_deferrable,
+    'NO' AS initially_deferred,
+    'YES' AS enforced,
+    NULL::VARCHAR AS comment,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS created,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS last_altered,
+    'SYSADMIN' AS constraint_owner,
+    'YES' AS rely
+FROM duckdb_constraints() c
+WHERE c.database_name = '{database}'
+  AND c.schema_name <> '{info_schema_name}'
+  AND c.constraint_type <> 'NOT NULL';
+
+-- INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._key_column_usage AS
+SELECT
+    c.database_name AS constraint_catalog,
+    CASE WHEN c.schema_name = 'main' THEN 'MAIN' ELSE c.schema_name END AS constraint_schema,
+    c.constraint_name AS constraint_name,
+    c.database_name AS table_catalog,
+    CASE WHEN c.schema_name = 'main' THEN 'MAIN' ELSE c.schema_name END AS table_schema,
+    c.table_name AS table_name,
+    u.column_name AS column_name,
+    u.position AS ordinal_position,
+    NULL::INTEGER AS position_in_unique_constraint
+FROM duckdb_constraints() c,
+     UNNEST(c.constraint_column_names) WITH ORDINALITY AS u(column_name, position)
+WHERE c.database_name = '{database}'
+  AND c.schema_name <> '{info_schema_name}'
+  AND c.constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY');
+
+-- INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._referential_constraints AS
+SELECT
+    c.database_name AS constraint_catalog,
+    CASE WHEN c.schema_name = 'main' THEN 'MAIN' ELSE c.schema_name END AS constraint_schema,
+    c.constraint_name AS constraint_name,
+    c.database_name AS unique_constraint_catalog,
+    CASE WHEN c.schema_name = 'main' THEN 'MAIN' ELSE c.schema_name END AS unique_constraint_schema,
+    NULL::VARCHAR AS unique_constraint_name,
+    'NONE' AS match_option,
+    'NO ACTION' AS update_rule,
+    'NO ACTION' AS delete_rule,
+    NULL::VARCHAR AS comment,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS created,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS last_altered
+FROM duckdb_constraints() c
+WHERE c.database_name = '{database}'
+  AND c.schema_name <> '{info_schema_name}'
+  AND c.constraint_type = 'FOREIGN KEY';
+
+-- INFORMATION_SCHEMA.INFORMATION_SCHEMA_CATALOG_NAME. One row, naming the
+-- database whose INFORMATION_SCHEMA is being read.
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._information_schema_catalog_name AS
+SELECT '{database}' AS catalog_name;
+
+-- INFORMATION_SCHEMA.APPLICABLE_ROLES / ENABLED_ROLES. SnowDuck runs every
+-- statement with full access, so the one role it reports is the one in use.
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._applicable_roles AS
+SELECT
+    'SYSADMIN' AS grantee,
+    'SYSADMIN' AS role_name,
+    'SYSADMIN' AS role_owner,
+    'YES' AS is_grantable;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._enabled_roles AS
+SELECT
+    'SYSADMIN' AS role_name,
+    'SYSADMIN' AS role_owner,
+    NULL::VARCHAR AS comment;
+
+-- Views for object kinds SnowDuck has no local equivalent for. They are empty
+-- rather than absent so a query against them returns no rows in Snowflake's
+-- column shape, which is what the object actually being missing looks like -
+-- rather than a catalog error the caller has to special-case.
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._table_privileges AS
+SELECT
+    NULL::VARCHAR AS grantor,
+    NULL::VARCHAR AS grantee,
+    NULL::VARCHAR AS table_catalog,
+    NULL::VARCHAR AS table_schema,
+    NULL::VARCHAR AS table_name,
+    NULL::VARCHAR AS privilege_type,
+    NULL::VARCHAR AS is_grantable,
+    NULL::VARCHAR AS with_hierarchy
+WHERE FALSE;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._usage_privileges AS
+SELECT
+    NULL::VARCHAR AS grantor,
+    NULL::VARCHAR AS grantee,
+    NULL::VARCHAR AS object_catalog,
+    NULL::VARCHAR AS object_schema,
+    NULL::VARCHAR AS object_name,
+    NULL::VARCHAR AS object_type,
+    NULL::VARCHAR AS privilege_type,
+    NULL::VARCHAR AS is_grantable
+WHERE FALSE;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._object_privileges AS
+SELECT
+    NULL::VARCHAR AS grantor,
+    NULL::VARCHAR AS grantee,
+    NULL::VARCHAR AS object_catalog,
+    NULL::VARCHAR AS object_schema,
+    NULL::VARCHAR AS object_name,
+    NULL::VARCHAR AS object_type,
+    NULL::VARCHAR AS privilege_type,
+    NULL::VARCHAR AS is_grantable
+WHERE FALSE;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._view_table_usage AS
+SELECT
+    NULL::VARCHAR AS view_catalog,
+    NULL::VARCHAR AS view_schema,
+    NULL::VARCHAR AS view_name,
+    NULL::VARCHAR AS table_catalog,
+    NULL::VARCHAR AS table_schema,
+    NULL::VARCHAR AS table_name,
+    NULL::VARCHAR AS column_name
+WHERE FALSE;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._external_tables AS
+SELECT
+    NULL::VARCHAR AS table_catalog,
+    NULL::VARCHAR AS table_schema,
+    NULL::VARCHAR AS table_name,
+    NULL::VARCHAR AS table_owner,
+    NULL::VARCHAR AS location,
+    NULL::VARCHAR AS file_format_name,
+    NULL::VARCHAR AS file_format_type,
+    NULL::BIGINT AS bytes,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS created,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS last_altered,
+    NULL::VARCHAR AS comment
+WHERE FALSE;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._file_formats AS
+SELECT
+    NULL::VARCHAR AS file_format_catalog,
+    NULL::VARCHAR AS file_format_schema,
+    NULL::VARCHAR AS file_format_name,
+    NULL::VARCHAR AS file_format_owner,
+    NULL::VARCHAR AS file_format_type,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS created,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS last_altered,
+    NULL::VARCHAR AS comment
+WHERE FALSE;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._procedures AS
+SELECT
+    NULL::VARCHAR AS procedure_catalog,
+    NULL::VARCHAR AS procedure_schema,
+    NULL::VARCHAR AS procedure_name,
+    NULL::VARCHAR AS procedure_owner,
+    NULL::VARCHAR AS argument_signature,
+    NULL::VARCHAR AS data_type,
+    NULL::VARCHAR AS procedure_language,
+    NULL::VARCHAR AS procedure_definition,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS created,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS last_altered,
+    NULL::VARCHAR AS comment
+WHERE FALSE;
+
+CREATE VIEW IF NOT EXISTS {database}.{info_schema_name}._load_history AS
+SELECT
+    NULL::VARCHAR AS schema_name,
+    NULL::VARCHAR AS file_name,
+    NULL::VARCHAR AS table_catalog_name,
+    NULL::VARCHAR AS table_schema_name,
+    NULL::VARCHAR AS table_name,
+    TO_TIMESTAMP(0)::TIMESTAMPTZ AS last_load_time,
+    NULL::VARCHAR AS status,
+    NULL::BIGINT AS row_count,
+    NULL::BIGINT AS row_parsed,
+    NULL::BIGINT AS file_size,
+    NULL::BIGINT AS first_error_message,
+    NULL::BIGINT AS error_count
+WHERE FALSE;

@@ -12,9 +12,11 @@ places where Snowflake's **behaviour** differs from the obvious DuckDB
 translation — the cases where the wrong answer comes back silently instead of
 as an error.
 
-Every rule on this page is pinned by an executable conformance suite in
-`tests/conformance/test_snowflake_semantics.py`. If a rule here and SnowDuck
-ever disagree, that is a bug — please
+Every rule on this page is pinned by an executable conformance suite under
+`tests/conformance/` — `test_snowflake_semantics.py` for the function results,
+`test_variant_accessors.py` for the VARIANT families, `test_number_formats.py`
+for the format models and `test_ddl_metadata.py` for the catalog. If a rule
+here and SnowDuck ever disagree, that is a bug — please
 [open an issue](https://github.com/hupe1980/snowduck/issues).
 
 {: .note }
@@ -134,6 +136,64 @@ SELECT AS_VARCHAR(PARSE_JSON('"x"'));      -- 'x'    (unquoted)
 
 `IS_NULL_VALUE` returns NULL — not FALSE — for a SQL NULL input.
 
+### The AS_ family checks rather than casts
+
+Snowflake's `AS_<type>` functions ask *"is the VARIANT of this type?"* and
+return NULL when it is not. They do **not** convert:
+
+```sql
+SELECT AS_INTEGER(PARSE_JSON('5'));      -- 5
+SELECT AS_INTEGER(PARSE_JSON('"5"'));    -- NULL   (a string, not an integer)
+SELECT AS_INTEGER(PARSE_JSON('1.5'));    -- NULL   (a float, not an integer)
+SELECT AS_VARCHAR(PARSE_JSON('5'));      -- NULL   (a number, not a string)
+SELECT AS_ARRAY(PARSE_JSON('{}'));       -- NULL   (an object, not an array)
+```
+
+Translating these to `TRY_CAST` returns a plausible wrong answer for every one
+of those NULL cases, which is why they are pinned here.
+
+The check is only possible for the types JSON itself distinguishes. Snowflake's
+`DATE`, `TIME`, `TIMESTAMP` and `BINARY` are stored locally as JSON strings, so
+`AS_DATE` and friends stay a cast, and `IS_DATE` and friends answer *"a string
+that reads back as that type"*:
+
+```sql
+SELECT IS_DATE(PARSE_JSON('"2024-01-01"'));  -- TRUE
+SELECT IS_DATE(PARSE_JSON('"xx"'));          -- FALSE
+SELECT IS_DATE(PARSE_JSON('5'));             -- FALSE
+```
+
+`AS_DECIMAL` and `AS_NUMBER` take the target precision and scale as arguments
+rather than in their name, and both are honoured:
+
+```sql
+SELECT AS_DECIMAL(PARSE_JSON('5'), 10, 2);   -- 5.00
+```
+
+### GET reads members as well as elements
+
+`GET` is two functions sharing a name: with an integer it reads an array
+element, with a string it reads an object member. Only the first is a DuckDB
+subscript — applying one to an object raises *"Expected ARRAY, but got
+OBJECT"* — so the member form becomes a JSON path.
+
+```sql
+SELECT GET(ARRAY_CONSTRUCT(10, 20), 0);       -- 10
+SELECT GET(PARSE_JSON('{"a":7}'), 'a');       -- 7
+SELECT GET(PARSE_JSON('{"a":7}'), 'missing'); -- NULL
+```
+
+### OBJECT_CONSTRUCT(*) builds an object from the whole row
+
+```sql
+SELECT OBJECT_CONSTRUCT(*) FROM t;            -- {"A":1,"B":"x"}
+```
+
+DuckDB has no expression that expands to the whole row, so the query's single
+`FROM` source is named in a value position instead — which is what produces its
+row struct. Over a join there is nothing to name, so `OBJECT_CONSTRUCT(*)` is
+refused with an error rather than quietly returning one side.
+
 ## Dates
 
 ### DAYNAME and MONTHNAME are abbreviated
@@ -205,6 +265,24 @@ A bare `ARRAY` column type is likewise stored as JSON, never as a typed list —
 `CREATE TABLE t (tags ARRAY)` would otherwise reject anything but integers. An
 explicitly typed `INT[]` column is left as a real DuckDB list.
 
+### DATEADD keeps a DATE a DATE
+
+Snowflake: *"If `date_or_time_part` is day or larger (for example, month,
+year), the function returns a DATE value"* — anything smaller returns
+`TIMESTAMP_NTZ`. DuckDB promotes `DATE + INTERVAL` to a timestamp, so the cast
+back is applied wherever the input is known to be a DATE:
+
+```sql
+SELECT DATEADD(month, 1, '2024-01-31'::DATE);  -- DATE 2024-02-29
+SELECT DATEADD(hour,  1, '2024-01-31'::DATE);  -- TIMESTAMP 2024-01-31 01:00
+SELECT ADD_MONTHS('2024-01-31'::DATE, 1);      -- DATE 2024-02-29 (clamped)
+```
+
+{: .note }
+> The input has to *say* it is a DATE — a cast, `TO_DATE`, or `CURRENT_DATE`.
+> The type of a bare column is not known at translation time, so `DATEADD` over
+> one keeps DuckDB's timestamp result.
+
 ### Array functions work on stored ARRAY columns
 
 SnowDuck stores an `ARRAY` column as DuckDB JSON, and coerces it back to a list
@@ -218,6 +296,15 @@ SELECT ARRAY_SIZE(tags), ARRAY_CONTAINS(2, tags), ARRAY_MAX(tags) FROM t;
 
 `ARRAY_MIN` and `ARRAY_MAX` compare numerically, not as JSON text - otherwise
 `'10'` would rank below `'2'`.
+
+Functions such as `SPLIT` and `OBJECT_KEYS` return a native DuckDB list rather
+than JSON, so array arguments are normalised through `to_json` before being
+read back as a list. That makes both representations interchangeable:
+
+```sql
+SELECT ARRAY_SIZE(SPLIT('a,b,c', ','));          -- 3
+SELECT ARRAY_TO_STRING(SPLIT('a,b', ','), '-');  -- 'a-b', not '"a"-"b"'
+```
 
 ## Objects
 
@@ -240,12 +327,127 @@ SELECT PARSE_URL('https://ex.com/a%20b?q=hello%20world&n=2');
 
 ## Numbers with format models
 
+### TO_NUMBER's format model does not set the scale
+
 A format model describes the decoration around the digits; it does **not** set
 the scale, which still defaults to 0:
 
 ```sql
 SELECT TO_NUMBER('$1,234.56', '$9,999.99');           -- 1235  (scale 0!)
 SELECT TO_DECIMAL('$3,741.72', '$9,999.99', 6, 2);    -- 3741.72
+```
+
+### TO_CHAR renders a numeric format model
+
+Going the other way, the model *is* the layout. The result is right-justified
+in a field as wide as the model, plus one column for the sign unless the model
+places one itself, and a value too wide for the model's integer positions
+renders as `#`:
+
+```sql
+SELECT TO_CHAR(-12.391,  '99.9');        -- '-12.4'
+SELECT TO_CHAR(0.5,      '99.9');        -- '   .5'      (9 suppresses a leading zero)
+SELECT TO_CHAR(1234.5,   '9999.99');     -- ' 1234.50'
+SELECT TO_CHAR(1234.56,  '$9,999.99');   -- ' $1,234.56'
+SELECT TO_CHAR(-1234.56, 'S000000.00');  -- '-001234.56'
+SELECT TO_CHAR(-1234.56, '9999.99MI');   -- ' 1234.56-'
+SELECT TO_CHAR(-1234.56, '9999.99PR');   -- '<1234.56>'
+SELECT TO_CHAR(0,        'B9999.9');     -- ''           (blank when zero)
+SELECT TO_CHAR(1234.56,  'TM9');         -- '1234.56'    (text minimum, unpadded)
+SELECT TO_CHAR(12345.67, '9999.99');     -- '########'   (too wide for the model)
+```
+
+Supported model elements are `0`, `9`, `.` (`D`), `,` (`G`), `$`, `S`, `MI`,
+`PR`, `B` and `TM`. `TO_VARCHAR` is the same function.
+
+This one used to fail silently: sqlglot logs *"Argument 'format' is not
+supported for expression 'ToChar'"* and drops the model, so the call returned
+the unformatted number. A numeric model and a date model share the argument
+position and are told apart by their alphabet — a date model needs `Y`, `H`,
+`:` or `/`, none of which a numeric model may contain.
+
+## Documented quirks
+
+Two Snowflake behaviours are surprising enough that SnowDuck reproduces them
+deliberately rather than "fixing" them.
+
+### JAROWINKLER_SIMILARITY ignores case
+
+Snowflake: *"The similarity computation is case-insensitive."* It returns an
+integer percentage, not a ratio:
+
+```sql
+SELECT JAROWINKLER_SIMILARITY('ABC', 'abd');  -- 82, same as 'abc' vs 'abd'
+SELECT JAROWINKLER_SIMILARITY('abc', 'abc');  -- 100
+```
+
+### BOOLAND rounds its arguments
+
+`BOOLAND`, `BOOLOR`, `BOOLXOR` and `BOOLNOT` treat any non-zero number as true —
+but they *round* first, so a fraction below 0.5 counts as zero. Snowflake's own
+documentation shows `BOOLAND(-0.4, 5)` returning FALSE, and recommends the `AND`
+operator when fractional values matter:
+
+```sql
+SELECT BOOLAND(-0.4, 5);  -- FALSE  (-0.4 rounds to 0)
+SELECT BOOLAND(2, 3);     -- TRUE
+```
+
+## Types
+
+### Declared VARCHAR lengths are kept
+
+DuckDB has no length-limited `VARCHAR` and drops the size at DDL time, so the
+declared length is recorded separately and reported back:
+
+```sql
+CREATE TABLE t (a VARCHAR(20), b VARCHAR);
+SELECT column_name, character_maximum_length
+FROM information_schema.columns WHERE table_name = 'T';
+-- A, 20
+-- B, NULL
+```
+
+`cursor.description` carries the same size in `internal_size`; an unbounded
+`VARCHAR` reports Snowflake's maximum of 16,777,216.
+
+### Comments survive the DDL that declares them
+
+Snowflake attaches comments inline; DuckDB only has the standalone
+`COMMENT ON`, and its SQL generator used to drop the inline forms with a
+warning — so the DDL succeeded while every description silently went missing.
+That is exactly what dbt's `persist_docs` writes.
+
+```sql
+CREATE TABLE t (id INT COMMENT 'the id') COMMENT = 'a table';
+ALTER TABLE t MODIFY COLUMN id COMMENT 'renamed';
+CREATE VIEW v COMMENT = 'a view' AS SELECT 1 x;
+
+SELECT comment FROM information_schema.tables  WHERE table_name = 'T';   -- 'a table'
+SELECT comment FROM information_schema.columns WHERE table_name = 'T';   -- 'renamed'
+SELECT comment FROM information_schema.views   WHERE table_name = 'V';   -- 'a view'
+```
+
+### Declared lengths track ALTER TABLE
+
+A column added or retyped by `ALTER TABLE` carries a declared size exactly as
+one in a `CREATE` does, and one dropped or retyped away from `VARCHAR` forgets
+the size it had — otherwise a stale length keeps being reported:
+
+```sql
+ALTER TABLE t ALTER COLUMN name SET DATA TYPE VARCHAR(30);  -- reported as 30
+ALTER TABLE t ALTER COLUMN name SET DATA TYPE INT;          -- reported as NULL
+```
+
+### Numeric UTC offsets
+
+Snowflake writes an offset as `+0200` — no colon, separated by a space — which
+DuckDB reads as a *timezone name* and rejects with `Unknown TimeZone '+0200'`.
+Timestamp literals are normalised to the ISO spelling first, so both work:
+
+```sql
+SELECT '2024-01-15 10:11:12 +0200'::TIMESTAMP_TZ;  -- 08:11:12 UTC
+SELECT '2024-01-15 10:11:12+02:00'::TIMESTAMP_TZ;  -- 08:11:12 UTC
 ```
 
 ## Session context

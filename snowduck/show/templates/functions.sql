@@ -2,7 +2,9 @@
 SELECT
     TO_TIMESTAMP(0)::TIMESTAMPTZ AS 'created_on',
     f.function_name AS 'name',
-    CASE WHEN f.internal THEN NULL ELSE f.schema_name END AS 'schema_name',
+    CASE WHEN f.internal THEN NULL
+         WHEN f.schema_name = 'main' THEN 'MAIN'
+         ELSE f.schema_name END AS 'schema_name',
     CASE WHEN f.internal THEN 'Y' ELSE 'N' END AS 'is_builtin',
     CASE WHEN f.function_type = 'aggregate' THEN 'Y' ELSE 'N' END AS 'is_aggregate',
     'N' AS 'is_ansi',

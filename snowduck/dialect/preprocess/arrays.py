@@ -24,6 +24,7 @@ from ..context import DialectContext
 
 _JSON_LIST = exp.DataType.build("JSON[]")
 _DOUBLE_LIST = exp.DataType.build("DOUBLE[]")
+_TEXT_LIST = exp.DataType.build("VARCHAR[]")
 
 # Array functions, and which of their arguments hold an array. sqlglot
 # normalises these so `this` is the array whatever order Snowflake wrote the
@@ -43,7 +44,6 @@ _ARRAY_ARGS: dict[type[exp.Expression], tuple[str, ...]] = {
     exp.ArrayReverse: ("this",),
     exp.ArraySize: ("this",),
     exp.ArraySlice: ("this",),
-    exp.ArrayToString: ("this",),
     exp.Flatten: ("this",),
     exp.GetExtract: ("this",),
     exp.SortArray: ("this",),
@@ -55,6 +55,12 @@ _NUMERIC_ARRAY_ARGS: dict[type[exp.Expression], tuple[str, ...]] = {
     exp.ArrayMax: ("this",),
     exp.ArrayMin: ("this",),
     exp.ArraySum: ("this",),
+}
+
+# ARRAY_TO_STRING joins the element *values*, so its elements must come back as
+# plain text rather than JSON - otherwise every string would keep its quotes.
+_TEXT_ARRAY_ARGS: dict[type[exp.Expression], tuple[str, ...]] = {
+    exp.ArrayToString: ("this",),
 }
 
 
@@ -101,17 +107,35 @@ def _needs_coercion(value: object) -> bool:
         return _is_mixed_literal_array(value)
     if isinstance(value, exp.Unnest):
         return False
-    if isinstance(value, exp.Cast) and value.to in (_JSON_LIST, _DOUBLE_LIST):
+    if isinstance(value, exp.Cast) and value.to in (
+        _JSON_LIST,
+        _DOUBLE_LIST,
+        _TEXT_LIST,
+    ):
         return False
     return True
 
 
-def _as_list(value: exp.Expression, numeric: bool) -> exp.Expression:
-    target = _DOUBLE_LIST if numeric else _JSON_LIST
-    return exp.Cast(this=value.copy(), to=target.copy())
+def _is_member_lookup(node: exp.GetExtract) -> bool:
+    """True for `GET(object, 'key')` rather than `GET(array, index)`."""
+    key = node.expression
+    return isinstance(key, exp.Literal) and key.is_string
 
 
-def _coerce_arg(node: exp.Expression, key: str, numeric: bool) -> None:
+def _as_list(value: exp.Expression, target: exp.DataType) -> exp.Expression:
+    """Cast an array argument to a DuckDB list.
+
+    The value goes through `to_json` first. Casting a list straight to JSON[]
+    re-parses each element as JSON, which fails outright on a native list of
+    plain strings - `ARRAY_SIZE(SPLIT('a,b', ','))` died with "Malformed JSON".
+    `to_json` normalises both representations to a JSON array first, so the
+    cast then works whichever form the argument arrived in.
+    """
+    source = exp.Anonymous(this="to_json", expressions=[value.copy()])
+    return exp.Cast(this=source, to=target.copy())
+
+
+def _coerce_arg(node: exp.Expression, key: str, target: exp.DataType) -> None:
     value = node.args.get(key)
 
     if isinstance(value, list):
@@ -119,14 +143,14 @@ def _coerce_arg(node: exp.Expression, key: str, numeric: bool) -> None:
             node.set(
                 key,
                 [
-                    _as_list(item, numeric) if _needs_coercion(item) else item
+                    _as_list(item, target) if _needs_coercion(item) else item
                     for item in value
                 ],
             )
         return
 
     if _needs_coercion(value) and isinstance(value, exp.Expression):
-        node.set(key, _as_list(value, numeric))
+        node.set(key, _as_list(value, target))
 
 
 def preprocess_arrays(
@@ -138,14 +162,23 @@ def preprocess_arrays(
         # elements of different types.
         return exp.Anonymous(this="json_array", expressions=expression.expressions)
 
-    for table, numeric in ((_ARRAY_ARGS, False), (_NUMERIC_ARRAY_ARGS, True)):
+    if isinstance(expression, exp.GetExtract) and _is_member_lookup(expression):
+        # GET(object, 'key') is not an array operation, so coercing its subject
+        # to a list would turn the object into a one-element array.
+        return expression
+
+    for table, target in (
+        (_ARRAY_ARGS, _JSON_LIST),
+        (_NUMERIC_ARRAY_ARGS, _DOUBLE_LIST),
+        (_TEXT_ARRAY_ARGS, _TEXT_LIST),
+    ):
         keys = table.get(type(expression))
         if keys is None:
             continue
 
         coerced = any(_needs_coercion(expression.args.get(key)) for key in keys)
         for key in keys:
-            _coerce_arg(expression, key, numeric)
+            _coerce_arg(expression, key, target)
 
         if coerced and type(expression) in _SEARCH_VALUE_ARGS:
             # The array's elements are now JSON values, so the value being

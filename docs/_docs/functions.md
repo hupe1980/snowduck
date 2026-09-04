@@ -37,6 +37,8 @@ either natively supported by DuckDB or transpiled automatically.
 | `INITCAP` | ✅ | Via macro |
 | `SOUNDEX` | ✅ | Via macro |
 | `TRANSLATE` | ✅ | |
+| `OCTET_LENGTH` | ✅ | Bytes, where `LENGTH` counts characters |
+| `COLLATION` | ⚠️ | Always NULL: nothing local carries a stored collation |
 | `INSERT` | ✅ | Splices a substring |
 | `RTRIMMED_LENGTH` | ✅ | |
 | `EDITDISTANCE` | ✅ | Levenshtein |
@@ -145,6 +147,13 @@ SELECT TIMESTAMP '2024-01-15 10:30:00';
 | `COVAR_POP` / `COVAR_SAMP` | ✅ | |
 | `PERCENTILE_CONT` / `PERCENTILE_DISC` | ✅ | |
 
+### HyperLogLog
+
+| Function | Status | Notes |
+|----------|--------|-------|
+| `HLL` | ✅ | |
+| `HLL_ACCUMULATE` / `HLL_COMBINE` / `HLL_ESTIMATE` | ⚠️ | The sketch is the set of distinct values, so it is exact rather than approximate and is not portable to Snowflake |
+
 ## Window Functions
 
 | Function | Status | Notes |
@@ -192,15 +201,28 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) = 1;
 
 ## VARIANT Predicates and Accessors
 
+The `AS_` family **tests** the stored type rather than coercing to it, as
+Snowflake does — `AS_INTEGER(PARSE_JSON('"5"'))` is NULL, not 5. See
+[Snowflake Semantics](snowflake-semantics#the-as_-family-checks-rather-than-casts).
+
 | Function | Status | Notes |
 |----------|--------|-------|
 | `IS_ARRAY` / `IS_OBJECT` | ✅ | |
 | `IS_NULL_VALUE` | ✅ | JSON null, not SQL NULL |
-| `IS_INTEGER` / `IS_DOUBLE` / `IS_DECIMAL` | ✅ | |
-| `IS_BOOLEAN` / `IS_VARCHAR` | ✅ | |
-| `AS_VARCHAR` / `AS_CHAR` | ✅ | Returns the string unquoted |
-| `AS_INTEGER` / `AS_DOUBLE` / `AS_DECIMAL` | ✅ | |
-| `AS_BOOLEAN` / `AS_DATE` / `AS_TIMESTAMP_NTZ` | ✅ | |
+| `IS_INTEGER` / `IS_DOUBLE` / `IS_DECIMAL` / `IS_REAL` | ✅ | |
+| `IS_BOOLEAN` / `IS_VARCHAR` / `IS_CHAR` | ✅ | |
+| `IS_DATE` / `IS_DATE_VALUE` / `IS_TIME` | ⚠️ | The VARIANT is a string that reads back as that type |
+| `IS_TIMESTAMP_NTZ` / `IS_TIMESTAMP_LTZ` / `IS_TIMESTAMP_TZ` | ⚠️ | As above |
+| `IS_BINARY` | ⚠️ | As above |
+| `AS_VARCHAR` / `AS_CHAR` | ✅ | Returns the string unquoted, NULL for any other type |
+| `AS_INTEGER` / `AS_DOUBLE` / `AS_REAL` | ✅ | NULL when the VARIANT holds another type |
+| `AS_DECIMAL` / `AS_NUMBER` | ✅ | Optional precision and scale are honoured |
+| `AS_BOOLEAN` / `AS_ARRAY` / `AS_OBJECT` | ✅ | NULL when the VARIANT holds another type |
+| `AS_DATE` / `AS_TIME` / `AS_BINARY` | ⚠️ | A cast: JSON has no such type to check against |
+| `AS_TIMESTAMP_NTZ` / `AS_TIMESTAMP_LTZ` / `AS_TIMESTAMP_TZ` | ⚠️ | As above |
+| `GET` | ✅ | Both `GET(array, index)` and `GET(object, key)` |
+| `GET_PATH` | ✅ | |
+| `MAP_CAT` | ✅ | Right-hand object wins on a shared key |
 | `TYPEOF` | ✅ | |
 
 ## Session Context Functions
@@ -310,11 +332,12 @@ LATERAL FLATTEN(input => items) f;
 |----------|--------|-------|
 | `CAST` | ✅ | |
 | `TRY_CAST` | ✅ | |
-| `TO_CHAR` / `TO_VARCHAR` | ✅ | |
+| `TO_CHAR` / `TO_VARCHAR` | ✅ | Numeric and date format models — see [Number formats](snowflake-semantics#to_char-renders-a-numeric-format-model) |
 | `TO_NUMBER` / `TO_DECIMAL` | ✅ | |
 | `TO_DOUBLE` / `TO_FLOAT` | ✅ | |
 | `TO_BOOLEAN` | ✅ | |
-| `TO_BINARY` | ✅ | |
+| `TO_BINARY` / `TRY_TO_BINARY` | ✅ | `HEX` (default), `BASE64` and `UTF-8` |
+| `TO_TIME` / `TIME` | ✅ | |
 | `TRY_TO_*` variants | ✅ | |
 
 ## System Functions
@@ -329,6 +352,7 @@ LATERAL FLATTEN(input => items) f;
 | `CURRENT_SESSION` | ✅ | |
 | `CURRENT_ACCOUNT` | ✅ | |
 | `SYSTEM$TYPEOF` | ✅ | |
+| `GET_DDL` | ⚠️ | TABLE, VIEW, SEQUENCE and FUNCTION; reports DuckDB's rendering of the object, and NULL where Snowflake raises |
 
 
 ## Boolean Functions

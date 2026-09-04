@@ -206,3 +206,44 @@ def test_create_database_gets_an_information_schema(cur):
 
     cur.execute("SELECT schema_name FROM OTHER_DB.INFORMATION_SCHEMA.SCHEMATA")
     assert "PUBLIC" in {row[0] for row in cur.fetchall()}
+
+
+def test_persist_docs_round_trips_through_the_catalog(cur):
+    """dbt's `persist_docs` writes descriptions as comments and reads them back.
+
+    The SQL here is what dbt-snowflake 1.12 actually emits: `comment on ... is
+    $$...$$` for the relation, and one `alter table ... alter` naming *every*
+    documented column at once for the columns. sqlglot cannot parse that
+    multi-column form and degrades it to an opaque Command, so it used to reach
+    DuckDB verbatim and fail the whole `dbt docs generate` run.
+    """
+    cur.execute("CREATE TABLE documented (id INT, name VARCHAR)")
+    cur.execute("comment on table documented IS $$The documented model$$")
+    cur.execute(
+        'alter table documented alter "ID" COMMENT $$Surrogate key$$ , '
+        '"NAME" COMMENT $$Display name$$'
+    )
+
+    cur.execute(
+        "SELECT comment FROM DEV_DB.INFORMATION_SCHEMA.TABLES "
+        "WHERE table_name = 'DOCUMENTED'"
+    )
+    assert cur.fetchall() == [("The documented model",)]
+
+    cur.execute(
+        "SELECT column_name, comment FROM DEV_DB.INFORMATION_SCHEMA.COLUMNS "
+        "WHERE table_name = 'DOCUMENTED' ORDER BY ordinal_position"
+    )
+    assert cur.fetchall() == [
+        ("ID", "Surrogate key"),
+        ("NAME", "Display name"),
+    ]
+
+
+def test_persist_docs_on_a_view(cur):
+    cur.execute("CREATE VIEW documented_v COMMENT = 'A documented view' AS SELECT 1 x")
+    cur.execute(
+        "SELECT comment FROM DEV_DB.INFORMATION_SCHEMA.VIEWS "
+        "WHERE table_name = 'DOCUMENTED_V'"
+    )
+    assert cur.fetchall() == [("A documented view",)]

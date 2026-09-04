@@ -13,14 +13,22 @@ SELECT
     1 AS retention_time,
     'STANDARD' AS type
 FROM duckdb_databases()
-WHERE database_name NOT IN ('memory', 'system', 'temp', '{account_catalog_name}');
+WHERE database_name NOT IN (
+    'memory', 'system', 'temp', '{account_catalog_name}', '{base_catalog_name}'
+);
 
-CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._tables_ext (
-    ext_table_catalog VARCHAR,
-    ext_table_schema VARCHAR,
-    ext_table_name VARCHAR,
-    comment VARCHAR,
-    PRIMARY KEY (ext_table_catalog, ext_table_schema, ext_table_name)
+-- Schemas SnowDuck was explicitly asked to create.
+--
+-- Needed only for MAIN. DuckDB gives every attached database an internal
+-- schema literally named `main`, which cannot be dropped or renamed
+-- ("Cannot drop entry \"main\" because it is an internal system entry"), so
+-- `CREATE SCHEMA db.MAIN` collides with it case-insensitively and the stored
+-- name stays lower case. Without this registry there is no way to tell a
+-- user's Snowflake schema MAIN from DuckDB's own plumbing.
+CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._created_schemas (
+    database_name VARCHAR,
+    schema_name VARCHAR,
+    PRIMARY KEY (database_name, schema_name)
 );
 
 CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._columns_ext (
@@ -36,7 +44,10 @@ CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._columns_ex
 CREATE VIEW IF NOT EXISTS {account_catalog_name}.{info_schema_name}._columns AS
 SELECT
     columns.table_catalog AS table_catalog,
-    columns.table_schema AS table_schema,
+    -- DuckDB's internal `main` schema is Snowflake's MAIN; it cannot be
+    -- renamed, so the Snowflake-visible name is mapped here.
+    CASE WHEN columns.table_schema = 'main' THEN 'MAIN'
+         ELSE columns.table_schema END AS table_schema,
     columns.table_name AS table_name,
     columns.column_name AS column_name,
     columns.ordinal_position AS ordinal_position,
@@ -107,40 +118,3 @@ LEFT JOIN duckdb_columns ddb_columns
    AND ddb_columns.table_name = columns.table_name
    AND ddb_columns.column_name = columns.column_name
 WHERE columns.table_schema != '{info_schema_name}';
-
-CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._users_ext (
-    name VARCHAR,
-    created_on TIMESTAMPTZ,
-    login_name VARCHAR,
-    display_name VARCHAR,
-    first_name VARCHAR,
-    last_name VARCHAR,
-    email VARCHAR,
-    mins_to_unlock VARCHAR,
-    days_to_expiry VARCHAR,
-    comment VARCHAR,
-    disabled VARCHAR,
-    must_change_password VARCHAR,
-    snowflake_lock VARCHAR,
-    default_warehouse VARCHAR,
-    default_namespace VARCHAR,
-    default_role VARCHAR,
-    default_secondary_roles VARCHAR,
-    ext_authn_duo VARCHAR,
-    ext_authn_uid VARCHAR,
-    mins_to_bypass_mfa VARCHAR,
-    owner VARCHAR,
-    last_success_login TIMESTAMPTZ,
-    expires_at_time TIMESTAMPTZ,
-    locked_until_time TIMESTAMPTZ,
-    has_password VARCHAR,
-    has_rsa_public_key VARCHAR
-);
-
-CREATE TABLE IF NOT EXISTS {account_catalog_name}.{info_schema_name}._warehouses_ext (
-    name VARCHAR,
-    state VARCHAR,
-    type VARCHAR,
-    size VARCHAR
-    --TODO: add more columns
-);

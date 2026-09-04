@@ -60,6 +60,15 @@ def preprocess_syntax(
         _cast_flatten_input(expression)
         return expression
 
+    if isinstance(expression, exp.Create):
+        _allow_main_schema(expression)
+        return expression
+
+    if isinstance(expression, exp.Drop):
+        rewritten = _drop_main_schema(expression)
+        if rewritten is not None:
+            return rewritten
+
     if isinstance(expression, exp.Merge):
         _unqualify_merge_assignments(expression)
         _qualify_merge_insert_values(expression)
@@ -206,6 +215,49 @@ def _like_list(
     for term in terms[1:]:
         combined = join(this=combined, expression=term)
     return exp.Paren(this=combined)
+
+
+def _main_schema_target(node: exp.Expression) -> exp.Table | None:
+    """The schema target of a CREATE/DROP SCHEMA statement, if it names MAIN.
+
+    sqlglot puts a schema name in `db` and the database in `catalog`.
+    """
+    if str(node.args.get("kind")).upper() != "SCHEMA":
+        return None
+    # CREATE keeps the target in `this`; DROP does not, so search for it.
+    target = node.this if isinstance(node.this, exp.Table) else node.find(exp.Table)
+    if not isinstance(target, exp.Table):
+        return None
+    name = target.args.get("db")
+    if isinstance(name, exp.Identifier) and str(name.this).upper() == "MAIN":
+        return target
+    return None
+
+
+def _allow_main_schema(create: exp.Create) -> None:
+    """Let `CREATE SCHEMA <db>.MAIN` succeed.
+
+    DuckDB already has an internal schema called `main` in every attached
+    database, so an unguarded CREATE collides with it ("Schema with name MAIN
+    already exists"). Snowflake databases have no MAIN until one is asked for,
+    so the statement is made idempotent here and the Snowflake-visible
+    existence is tracked separately (see InfoSchemaManager.register_schema).
+    """
+    if _main_schema_target(create) is not None:
+        create.set("exists", True)
+
+
+def _drop_main_schema(drop: exp.Drop) -> exp.Expression | None:
+    """`DROP SCHEMA <db>.MAIN` cannot drop DuckDB's internal `main`.
+
+    DuckDB refuses with "Cannot drop entry \"main\" because it is an internal
+    system entry", so the statement becomes a no-op here. The cursor removes
+    the schema from the registry and clears its contents, which is what makes
+    the drop observable.
+    """
+    if _main_schema_target(drop) is None:
+        return None
+    return exp.Select(expressions=[exp.Literal.number(1)])
 
 
 def _unqualify_merge_assignments(merge: exp.Merge) -> None:

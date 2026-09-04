@@ -362,6 +362,7 @@ class _ShowBuilder:
         self._context = context
         manager = context.info_schema_manager
         self._account_catalog = manager.account_catalog_name
+        self._base_catalog = manager.base_catalog_name
         self._info_schema = manager.info_schema_name
 
     # -- entry point --------------------------------------------------------
@@ -421,7 +422,9 @@ class _ShowBuilder:
 
     @property
     def _excluded_databases(self) -> str:
-        return _quoted_list([*_INTERNAL_DATABASES, self._account_catalog])
+        return _quoted_list(
+            [*_INTERNAL_DATABASES, self._account_catalog, self._base_catalog]
+        )
 
     def _object_source(self) -> str:
         return load_sql(
@@ -534,6 +537,7 @@ class _ShowBuilder:
         ) + self._name_predicates("s.schema_name")
         return load_sql(
             _template(template),
+            account_catalog_name=self._account_catalog,
             info_schema_name=self._info_schema,
             fragments={
                 "excluded_databases": self._excluded_databases,

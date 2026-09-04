@@ -6,7 +6,7 @@ long ``elif`` chain) keeps the supported surface introspectable - see
 :func:`supported_functions`, which the documentation is generated from.
 """
 
-from typing import Callable, cast
+from typing import Any, Callable, cast
 
 import sqlglot
 from sqlglot import exp
@@ -18,12 +18,67 @@ Builder = Callable[[list[exp.Expression], DialectContext], exp.Expression | None
 _BUILDERS: dict[str, Builder] = {}
 _CATEGORIES: dict[str, str] = {}
 
+# sqlglot promotes functions from a generic Anonymous call to a dedicated node
+# as its Snowflake coverage grows, and a name-only registry silently stops
+# firing when that happens. Registering the node class alongside the name keeps
+# a builder working across those upgrades.
+_NODE_BUILDERS: dict[type[exp.Func], Builder] = {}
+
+#: Builders that need the node itself rather than its argument list, because
+#: something other than an argument decides the translation - sqlglot folds
+#: TO_BINARY and TRY_TO_BINARY into one node with a `safe` flag, for instance.
+NodeBuilder = Callable[[Any, DialectContext], "exp.Expression | None"]
+_TYPED_BUILDERS: dict[type[exp.Func], NodeBuilder] = {}
+
+
+def _node_class(name: str) -> type[exp.Func] | None:
+    """The sqlglot node a Snowflake function name maps to, if there is one.
+
+    Only `exp.Func` subclasses are accepted: `INSERT` would otherwise derive to
+    `exp.Insert`, the DML statement, and hijack every INSERT in the tree.
+    """
+    candidate = _NODE_ALIASES.get(
+        name, "".join(part.capitalize() for part in name.split("_"))
+    )
+    node = getattr(exp, candidate, None)
+    if isinstance(node, type) and issubclass(node, exp.Func):
+        return node
+    return None
+
+
+def _positional_args(node: exp.Expression) -> list[exp.Expression]:
+    """A function node's arguments in call order."""
+    args: list[exp.Expression] = []
+    for key in node.arg_types or ():
+        value = node.args.get(key)
+        if isinstance(value, list):
+            args.extend(item for item in value if isinstance(item, exp.Expression))
+        elif isinstance(value, exp.Expression):
+            args.append(value)
+    return args
+
+
+def _add_builder(category: str, name: str, fn: Builder) -> None:
+    """Register a builder under both its Snowflake name and its sqlglot node."""
+    _BUILDERS[name] = fn
+    _CATEGORIES[name] = category
+    node = _node_class(name)
+    if node is not None:
+        _NODE_BUILDERS[node] = fn
+
+
+#: Snowflake names whose sqlglot node is not the CamelCase of the name, so
+#: `_node_class` cannot find it. Without this the builder only fires for a call
+#: sqlglot left as Anonymous - which, for these, it never does.
+_NODE_ALIASES: dict[str, str] = {
+    "OCTET_LENGTH": "ByteLength",
+}
+
 
 def _register(category: str, *names: str) -> Callable[[Builder], Builder]:
     def decorate(fn: Builder) -> Builder:
         for name in names:
-            _BUILDERS[name] = fn
-            _CATEGORIES[name] = category
+            _add_builder(category, name, fn)
         return fn
 
     return decorate
@@ -141,77 +196,93 @@ def _object_delete(
     return _call("json_merge_patch", obj, _call("json_object", *pairs))
 
 
-@_register("Semi-structured", "ARRAY_FLATTEN")
-def _array_flatten(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    if len(args) != 1:
+#: JSON types that stand in for each Snowflake VARIANT type. DuckDB reports a
+#: JSON value's type through `json_type`, and its vocabulary is narrower than
+#: Snowflake's: every integer is UBIGINT/BIGINT and there is no DATE, TIME,
+#: TIMESTAMP or BINARY at all - those arrive as strings.
+_JSON_TYPES: dict[str, tuple[str, ...]] = {
+    "ARRAY": ("ARRAY",),
+    "OBJECT": ("OBJECT",),
+    "BOOLEAN": ("BOOLEAN",),
+    "VARCHAR": ("VARCHAR",),
+    "INTEGER": ("BIGINT", "UBIGINT", "INTEGER"),
+    "NUMERIC": ("DOUBLE", "BIGINT", "UBIGINT", "INTEGER"),
+}
+
+
+def _as_type(type_name: str, json_type: str | None = None) -> Builder:
+    """AS_<type>(v) - the value if the VARIANT holds that type, else NULL.
+
+    Snowflake's AS_ family *tests* the stored type rather than coercing to it:
+    `AS_INTEGER(PARSE_JSON('"5"'))` is NULL, not 5. That test is only possible
+    for the types JSON itself distinguishes; DATE, TIME, TIMESTAMP and BINARY
+    are stored as strings, so those stay a plain TRY_CAST.
+    """
+    types = _JSON_TYPES.get(json_type or "")
+
+    def build(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
+        if not args:
+            return None
+        # AS_DECIMAL(v, precision [, scale]) states the target type in its
+        # trailing arguments rather than in its name.
+        target = _decimal_type(args[1:]) if type_name.startswith("DECIMAL") else None
+        cast = exp.TryCast(this=args[0], to=exp.DataType.build(target or type_name))
+        if types is None:
+            return cast
+        return exp.Case(
+            ifs=[exp.If(this=_json_type_is(args[0].copy(), *types), true=cast)]
+        )
+
+    return build
+
+
+def _decimal_type(arguments: list[exp.Expression]) -> str | None:
+    """`DECIMAL(p, s)` from AS_DECIMAL's trailing precision/scale arguments."""
+    digits: list[int] = []
+    for argument in arguments[:2]:
+        if not isinstance(argument, exp.Literal) or argument.is_string:
+            return None
+        try:
+            digits.append(int(argument.this))
+        except (TypeError, ValueError):
+            return None
+    if not digits:
         return None
-    return _call("flatten", args[0])
+    precision = digits[0]
+    scale = digits[1] if len(digits) > 1 else 0
+    return f"DECIMAL({precision}, {scale})"
 
 
-@_register("Semi-structured", "IS_ARRAY")
-def _is_array(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    return _json_type_is(args[0], "ARRAY") if len(args) == 1 else None
+def _is_type(json_type: str) -> Builder:
+    """IS_<type>(v) - whether the VARIANT holds that type."""
+    types = _JSON_TYPES[json_type]
+
+    def build(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
+        return _json_type_is(args[0], *types) if len(args) == 1 else None
+
+    return build
 
 
-@_register("Semi-structured", "IS_OBJECT")
-def _is_object(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    return _json_type_is(args[0], "OBJECT") if len(args) == 1 else None
+def _is_castable_string(type_name: str) -> Builder:
+    """IS_DATE/IS_TIME/IS_TIMESTAMP_*/IS_BINARY(v).
 
+    JSON has no such types, so a VARIANT carrying one is a string. The nearest
+    honest test is that it is a string *and* reads back as that type.
+    """
 
-@_register("Semi-structured", "IS_NULL_VALUE")
-def _is_null_value(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    """TRUE for a JSON null - distinct from a SQL NULL, which yields NULL."""
-    if len(args) != 1:
-        return None
-    return exp.Case(
-        ifs=[exp.If(this=exp.Is(this=args[0], expression=exp.Null()), true=exp.Null())],
-        default=_json_type_is(args[0], "NULL"),
-    )
-
-
-@_register("Semi-structured", "IS_BOOLEAN")
-def _is_boolean(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    return _json_type_is(args[0], "BOOLEAN") if len(args) == 1 else None
-
-
-@_register("Semi-structured", "IS_VARCHAR", "IS_CHAR")
-def _is_varchar(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    return _json_type_is(args[0], "VARCHAR") if len(args) == 1 else None
-
-
-@_register("Semi-structured", "IS_INTEGER")
-def _is_integer(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    if len(args) != 1:
-        return None
-    return _json_type_is(args[0], "BIGINT", "UBIGINT", "INTEGER")
-
-
-@_register("Semi-structured", "IS_DOUBLE", "IS_DECIMAL", "IS_REAL")
-def _is_double(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    if len(args) != 1:
-        return None
-    return _json_type_is(args[0], "DOUBLE", "BIGINT", "UBIGINT", "INTEGER")
-
-
-def _as_type(type_name: str) -> Builder:
     def build(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
         if len(args) != 1:
             return None
-        return exp.TryCast(this=args[0], to=exp.DataType.build(type_name))
+        text = _call("json_extract_string", args[0].copy(), _str("$"))
+        return exp.And(
+            this=_json_type_is(args[0], "VARCHAR"),
+            expression=exp.Not(
+                this=exp.Is(
+                    this=exp.TryCast(this=text, to=exp.DataType.build(type_name)),
+                    expression=exp.Null(),
+                )
+            ),
+        )
 
     return build
 
@@ -246,37 +317,76 @@ for _name, _target, _safe in (
     ("TO_TIME", "TIME", False),
     ("TRY_TO_TIME", "TIME", True),
 ):
-    _BUILDERS[_name] = _cast_to(_target, safe=_safe)
-    _CATEGORIES[_name] = "Conversion"
+    _add_builder("Conversion", _name, _cast_to(_target, safe=_safe))
 
 
-_BUILDERS["AS_INTEGER"] = _as_type("BIGINT")
-_BUILDERS["AS_DOUBLE"] = _as_type("DOUBLE")
-_BUILDERS["AS_DECIMAL"] = _as_type("DECIMAL(38, 0)")
-_BUILDERS["AS_NUMBER"] = _as_type("DECIMAL(38, 0)")
-_BUILDERS["AS_BOOLEAN"] = _as_type("BOOLEAN")
-_BUILDERS["AS_DATE"] = _as_type("DATE")
-_BUILDERS["AS_TIMESTAMP_NTZ"] = _as_type("TIMESTAMP")
-for _n in (
-    "AS_INTEGER",
-    "AS_DOUBLE",
-    "AS_DECIMAL",
-    "AS_NUMBER",
-    "AS_BOOLEAN",
-    "AS_DATE",
-    "AS_TIMESTAMP_NTZ",
+# The VARIANT accessors. `json_type` is the storage's own type tag, so the ones
+# JSON models are checked; the rest (DATE, TIME, TIMESTAMP, BINARY - all stored
+# as strings) fall back to a TRY_CAST.
+for _name, _target, _json in (
+    ("AS_INTEGER", "BIGINT", "INTEGER"),
+    ("AS_DOUBLE", "DOUBLE", "NUMERIC"),
+    ("AS_REAL", "DOUBLE", "NUMERIC"),
+    ("AS_DECIMAL", "DECIMAL(38, 0)", "NUMERIC"),
+    ("AS_NUMBER", "DECIMAL(38, 0)", "NUMERIC"),
+    ("AS_BOOLEAN", "BOOLEAN", "BOOLEAN"),
+    ("AS_ARRAY", "JSON", "ARRAY"),
+    ("AS_OBJECT", "JSON", "OBJECT"),
+    ("AS_DATE", "DATE", None),
+    ("AS_TIME", "TIME", None),
+    ("AS_TIMESTAMP_NTZ", "TIMESTAMP", None),
+    ("AS_TIMESTAMP_LTZ", "TIMESTAMPTZ", None),
+    ("AS_TIMESTAMP_TZ", "TIMESTAMPTZ", None),
+    ("AS_BINARY", "BLOB", None),
 ):
-    _CATEGORIES[_n] = "Semi-structured"
+    _add_builder("Semi-structured", _name, _as_type(_target, _json))
+
+
+for _name, _json in (
+    ("IS_ARRAY", "ARRAY"),
+    ("IS_OBJECT", "OBJECT"),
+    ("IS_BOOLEAN", "BOOLEAN"),
+    ("IS_VARCHAR", "VARCHAR"),
+    ("IS_CHAR", "VARCHAR"),
+    ("IS_INTEGER", "INTEGER"),
+    ("IS_DOUBLE", "NUMERIC"),
+    ("IS_DECIMAL", "NUMERIC"),
+    ("IS_REAL", "NUMERIC"),
+):
+    _add_builder("Semi-structured", _name, _is_type(_json))
+
+
+for _name, _target in (
+    ("IS_DATE", "DATE"),
+    ("IS_DATE_VALUE", "DATE"),
+    ("IS_TIME", "TIME"),
+    ("IS_TIMESTAMP_NTZ", "TIMESTAMP"),
+    ("IS_TIMESTAMP_LTZ", "TIMESTAMPTZ"),
+    ("IS_TIMESTAMP_TZ", "TIMESTAMPTZ"),
+    ("IS_BINARY", "BLOB"),
+):
+    _add_builder("Semi-structured", _name, _is_castable_string(_target))
 
 
 @_register("Semi-structured", "AS_VARCHAR", "AS_CHAR")
 def _as_varchar(
     args: list[exp.Expression], ctx: DialectContext
 ) -> exp.Expression | None:
-    """Unwrap a VARIANT string without its JSON quotes."""
+    """Unwrap a VARIANT string without its JSON quotes.
+
+    Like the rest of the AS_ family this checks rather than coerces, so
+    `AS_VARCHAR(PARSE_JSON('5'))` is NULL.
+    """
     if len(args) != 1:
         return None
-    return _call("json_extract_string", args[0], _str("$"))
+    return exp.Case(
+        ifs=[
+            exp.If(
+                this=_json_type_is(args[0].copy(), "VARCHAR"),
+                true=_call("json_extract_string", args[0], _str("$")),
+            )
+        ]
+    )
 
 
 @_register("Semi-structured", "TO_OBJECT")
@@ -293,38 +403,6 @@ def _to_object(
 # ---------------------------------------------------------------------------
 
 
-@_register("String", "INSERT")
-def _insert(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    """INSERT(base, pos, len, insert) splices `insert` into `base`."""
-    if len(args) != 4:
-        return None
-    base, pos, length, ins = args
-    head = _call("substr", base, _num(1), exp.Sub(this=pos, expression=_num(1)))
-    tail = _call("substr", base, exp.Add(this=pos, expression=length))
-    return exp.DPipe(this=exp.DPipe(this=head, expression=ins), expression=tail)
-
-
-@_register("String", "RTRIMMED_LENGTH")
-def _rtrimmed_length(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    if len(args) != 1:
-        return None
-    return _call("length", _call("rtrim", args[0]))
-
-
-@_register("String", "JAROWINKLER_SIMILARITY")
-def _jarowinkler(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    """Snowflake reports similarity as an integer percentage (0-100)."""
-    if len(args) != 2:
-        return None
-    ratio = _call("jaro_winkler_similarity", *args)
-    scaled = exp.Mul(this=ratio, expression=_num(100))
-    return exp.Cast(this=_call("round", scaled), to=exp.DataType.build("BIGINT"))
-
-
 @_register("String", "TRY_BASE64_DECODE_STRING")
 def _try_base64_decode(
     args: list[exp.Expression], ctx: DialectContext
@@ -332,6 +410,214 @@ def _try_base64_decode(
     if not args:
         return None
     return _call("try", _call("decode", _call("from_base64", args[0])))
+
+
+@_register("String", "OCTET_LENGTH")
+def _octet_length(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """OCTET_LENGTH(s) - the length in bytes, not characters.
+
+    DuckDB's `octet_length` only takes a BLOB, and casting a string to one
+    rejects any non-ASCII byte; `strlen` already counts bytes.
+    """
+    return _call("strlen", args[0]) if len(args) == 1 else None
+
+
+@_register("String", "COLLATION")
+def _collation(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """COLLATION(expr) - the collation in effect.
+
+    SnowDuck emulates only the case-insensitive specifiers, by folding case, so
+    nothing here ever carries a stored collation and the answer is always NULL -
+    which is what Snowflake reports for an uncollated expression.
+    """
+    return exp.Null() if len(args) == 1 else None
+
+
+@_register("String", "TRY_TO_BINARY")
+def _try_to_binary(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """TRY_TO_BINARY(s [, format]) - HEX, BASE64 or UTF-8, NULL on bad input."""
+    return _to_binary(args, safe=True) if args else None
+
+
+@_register("Conversion", "TO_BINARY")
+def _to_binary_function(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    return _to_binary(args) if args else None
+
+
+def _to_binary_node(node: exp.ToBinary, ctx: DialectContext) -> exp.Expression | None:
+    """TO_BINARY and TRY_TO_BINARY are one node, told apart by `safe`."""
+    args = _rewritten_args(_positional_args(node), ctx)
+    if not args:
+        return None
+    return _to_binary(args, safe=bool(node.args.get("safe")))
+
+
+_TYPED_BUILDERS[exp.ToBinary] = _to_binary_node
+
+
+def _time_node(node: exp.Time, ctx: DialectContext) -> exp.Expression | None:
+    """TIME(expr) - Snowflake's one-argument alias for TO_TIME.
+
+    sqlglot renders the node as `CAST(... AT TIME ZONE <zone> AS TIME)`, and
+    with no zone to render that comes out as SQL DuckDB cannot parse. The
+    two-argument form (a zone conversion) is left to sqlglot.
+    """
+    if node.args.get("zone") is not None:
+        return None
+    return exp.Cast(this=node.this, to=exp.DataType.build("TIME"))
+
+
+_TYPED_BUILDERS[exp.Time] = _time_node
+
+
+#: GET_DDL object kind -> (DuckDB catalog function, DDL column, name column).
+_DDL_SOURCES: dict[str, tuple[str, str, str]] = {
+    "TABLE": ("duckdb_tables()", "sql", "table_name"),
+    "VIEW": ("duckdb_views()", "sql", "view_name"),
+    "SEQUENCE": ("duckdb_sequences()", "sql", "sequence_name"),
+    "FUNCTION": ("duckdb_functions()", "macro_definition", "function_name"),
+}
+
+
+@_register("Context", "GET_DDL")
+def _get_ddl(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
+    """GET_DDL('<kind>', '<name>') - the statement that would recreate an object.
+
+    The text comes from DuckDB's catalog, so it is *DuckDB's* rendering of the
+    object rather than Snowflake DDL: types are DuckDB's spelling and Snowflake-
+    only clauses the object never had locally are absent. It is read through a
+    scalar subquery rather than resolved here, so the answer tracks the catalog
+    instead of being frozen into the translated SQL. An object that does not
+    exist reads back as NULL, where Snowflake raises.
+    """
+    if len(args) < 2:
+        return None
+    kind_arg, name_arg = args[0], args[1]
+    if not (isinstance(kind_arg, exp.Literal) and kind_arg.is_string):
+        return None
+    if not (isinstance(name_arg, exp.Literal) and name_arg.is_string):
+        return None
+
+    source = _DDL_SOURCES.get(str(kind_arg.this).upper())
+    if source is None:
+        return None
+    relation, ddl_column, name_column = source
+
+    parts = [part.strip('"') for part in str(name_arg.this).split(".")]
+    name = parts[-1]
+    schema = parts[-2] if len(parts) > 1 else (ctx.current_schema or "")
+    database = parts[-3] if len(parts) > 2 else (ctx.current_database or "")
+
+    predicates = [f"upper({name_column}) = upper({_quote(name)})"]
+    if schema:
+        # DuckDB's internal `main` is Snowflake's MAIN.
+        predicates.append(
+            f"upper(schema_name) IN (upper({_quote(schema)}), "
+            f"CASE WHEN upper({_quote(schema)}) = 'MAIN' THEN 'MAIN' ELSE '' END)"
+        )
+    if database:
+        predicates.append(f"upper(database_name) = upper({_quote(database)})")
+
+    return exp.Subquery(
+        this=cast(
+            exp.Expression,
+            sqlglot.parse_one(
+                f"SELECT {ddl_column} FROM {relation} WHERE {' AND '.join(predicates)}",
+                read="duckdb",
+            ),
+        )
+    )
+
+
+def _quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _to_binary(args: list[exp.Expression], *, safe: bool = False) -> exp.Expression:
+    """The decoder a TO_BINARY format names; HEX is Snowflake's default.
+
+    DuckDB's `try()` cannot rescue `unhex` on a constant - the folding happens
+    before the guard - so the safe form tests the input against the encoding's
+    alphabet instead.
+    """
+    encoding = "HEX"
+    if len(args) > 1 and isinstance(args[1], exp.Literal) and args[1].is_string:
+        encoding = str(args[1].this).upper()
+
+    if encoding == "BASE64":
+        decoded: exp.Expression = _call("from_base64", args[0])
+        valid = r"^[A-Za-z0-9+/]*={0,2}$"
+    elif encoding in ("UTF-8", "UTF8"):
+        decoded = exp.Cast(this=args[0], to=exp.DataType.build("BLOB"))
+        valid = ""
+    else:
+        decoded = _call("unhex", args[0])
+        valid = "^([0-9a-fA-F][0-9a-fA-F])*$"
+
+    if not safe:
+        return decoded
+    if not valid:
+        return _call("try", decoded)
+    return exp.Case(
+        ifs=[
+            exp.If(
+                this=_call("regexp_matches", args[0].copy(), _str(valid)),
+                true=decoded,
+            )
+        ]
+    )
+
+
+@_register("Semi-structured", "MAP_CAT")
+def _map_cat(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
+    """MAP_CAT(a, b) - the two objects merged, b winning on a shared key."""
+    if len(args) != 2:
+        return None
+    return _call("json_merge_patch", args[0], args[1])
+
+
+@_register("Aggregate", "HLL_ACCUMULATE")
+def _hll_accumulate(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """HLL_ACCUMULATE(x) - a sketch that HLL_ESTIMATE can read back.
+
+    DuckDB has no serialisable HyperLogLog state, so the "sketch" is the set of
+    distinct values. HLL_ESTIMATE then counts it, which gives the same answer
+    the three-function form is asked for; only the intermediate representation
+    differs, and it is not one Snowflake documents as portable either.
+    """
+    return (
+        _call("list", exp.Distinct(expressions=[args[0]])) if len(args) == 1 else None
+    )
+
+
+@_register("Aggregate", "HLL_COMBINE")
+def _hll_combine(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """HLL_COMBINE(sketch) - merge sketches across groups."""
+    if len(args) != 1:
+        return None
+    return _call("list_distinct", _call("flatten", _call("list", args[0])))
+
+
+@_register("Aggregate", "HLL_ESTIMATE")
+def _hll_estimate(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """HLL_ESTIMATE(sketch) - the cardinality a sketch stands for."""
+    if len(args) != 1:
+        return None
+    return _call("length", _call("list_distinct", args[0]))
 
 
 @_register("String", "TRY_HEX_DECODE_STRING")
@@ -363,6 +649,11 @@ _URL_PARAMETERS_TEMPLATE = (
     "  x -> x IS NOT NULL), 'string_agg', ','), '') || '}' AS JSON)"
 )
 
+# Snowflake reports an absent component as null, not as an empty string - the
+# documented output for a bare `https://host/` has null for fragment,
+# parameters, port and query. `path` is the exception: it comes back as "".
+_URL_NULL_WHEN_ABSENT = frozenset({"scheme", "host", "port", "query", "fragment"})
+
 
 @_register("String", "PARSE_URL")
 def _parse_url(
@@ -377,19 +668,35 @@ def _parse_url(
         return None
     url = args[0]
 
-    def part(pattern: str) -> exp.Expression:
-        return _call(
+    def part(name: str, pattern: str) -> exp.Expression:
+        matched = _call(
             "url_decode", _call("regexp_extract", url.copy(), _str(pattern), _num(1))
         )
+        if name in _URL_NULL_WHEN_ABSENT:
+            # regexp_extract yields '' when the component is missing.
+            return _call("nullif", matched, _str(""))
+        return matched
 
     query = _call("regexp_extract", url.copy(), _str(_URL_PARTS["query"]), _num(1))
 
     pairs: list[exp.Expression] = []
     for name, pattern in _URL_PARTS.items():
         pairs.append(_str(name))
-        pairs.append(part(pattern))
+        pairs.append(part(name, pattern))
+
+    # `parameters` is null when there is no query string at all.
     pairs.append(_str("parameters"))
-    pairs.append(_template(_URL_PARAMETERS_TEMPLATE, _QUERY=query))
+    pairs.append(
+        exp.Case(
+            ifs=[
+                exp.If(
+                    this=exp.EQ(this=query.copy(), expression=_str("")),
+                    true=exp.Null(),
+                )
+            ],
+            default=_template(_URL_PARAMETERS_TEMPLATE, _QUERY=query),
+        )
+    )
 
     return _call("json_object", *pairs)
 
@@ -474,137 +781,34 @@ def _shift_to_weekday(
     )
 
 
-@_register("Date & time", "NEXT_DAY")
-def _next_day(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    if len(args) != 2:
-        return None
-    target = _weekday_index(args[1])
-    return _shift_to_weekday(args[0], target, forward=True) if target else None
-
-
-@_register("Date & time", "PREVIOUS_DAY")
-def _previous_day(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    if len(args) != 2:
-        return None
-    target = _weekday_index(args[1])
-    return _shift_to_weekday(args[0], target, forward=False) if target else None
-
-
-@_register("Date & time", "DAYNAME")
-def _dayname(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    """Snowflake returns the three-letter abbreviation, e.g. 'Mon'."""
-    if len(args) != 1:
-        return None
-    return _call("strftime", args[0], _str("%a"))
-
-
-@_register("Date & time", "MONTHNAME")
-def _monthname(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    """Snowflake returns the three-letter abbreviation, e.g. 'Jan'."""
-    if len(args) != 1:
-        return None
-    return _call("strftime", args[0], _str("%b"))
-
-
-@_register("Date & time", "TIME_SLICE")
-def _time_slice(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    """TIME_SLICE(ts, n, unit[, 'START'|'END']) rounds down to an n-unit bucket."""
-    if len(args) < 3:
-        return None
-    ts, count, unit = args[0], args[1], args[2]
-    if not (isinstance(unit, exp.Literal) and unit.is_string):
-        return None
-    interval = exp.Interval(this=count, unit=exp.Var(this=str(unit.this).upper()))
-    bucket = _call("time_bucket", interval, ts)
-    if len(args) > 3 and isinstance(args[3], exp.Literal):
-        if str(args[3].this).upper() == "END":
-            return exp.Add(this=bucket, expression=interval)
-    return bucket
-
-
-@_register("Date & time", "GETDATE")
-def _getdate(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    """GETDATE() is Snowflake's alias for CURRENT_TIMESTAMP."""
-    return exp.CurrentTimestamp() if not args else None
-
-
-@_register("Date & time", "SYSDATE")
-def _sysdate(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    """SYSDATE() is the current time in UTC, without a timezone."""
-    if args:
-        return None
-    return exp.Cast(
-        this=_call("timezone", _str("UTC"), exp.CurrentTimestamp()),
-        to=exp.DataType.build("TIMESTAMP"),
-    )
-
-
-@_register("Date & time", "YEAROFWEEK", "YEAROFWEEKISO")
-def _yearofweek(
-    args: list[exp.Expression], ctx: DialectContext
-) -> exp.Expression | None:
-    if len(args) != 1:
-        return None
-    return _call("isoyear", args[0])
-
-
 # ---------------------------------------------------------------------------
 # Boolean & aggregate
 # ---------------------------------------------------------------------------
 
 
-@_register("Conditional", "BOOLAND")
-def _booland(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    if len(args) != 2:
-        return None
-    return exp.And(this=_truthy(args[0]), expression=_truthy(args[1]))
+@_register("Context", "LAST_QUERY_ID")
+def _last_query_id(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """The id of the session's previous statement.
+
+    Snowflake's optional argument selects an older statement; only the most
+    recent one is tracked here, so any argument reports the same id.
+    """
+    return _str(ctx.last_query_id or "00000000-0000-0000-0000-000000000000")
 
 
-@_register("Conditional", "BOOLOR")
-def _boolor(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    if len(args) != 2:
-        return None
-    return exp.Or(this=_truthy(args[0]), expression=_truthy(args[1]))
-
-
-@_register("Conditional", "BOOLXOR")
-def _boolxor(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    if len(args) != 2:
-        return None
-    return exp.NEQ(this=_truthy(args[0]), expression=_truthy(args[1]))
-
-
-@_register("Conditional", "BOOLNOT")
-def _boolnot(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
+@_register("Context", "SYSTEM$TYPEOF")
+def _system_typeof(
+    args: list[exp.Expression], ctx: DialectContext
+) -> exp.Expression | None:
+    """SYSTEM$TYPEOF(x) reports the runtime type of an expression."""
     if len(args) != 1:
         return None
-    return exp.Not(this=exp.Paren(this=_truthy(args[0])))
+    return _call("typeof", args[0])
 
 
-@_register("String", "INITCAP")
-def _initcap(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
-    """INITCAP(str, delimiters): capitalise each character that starts a word."""
-    if len(args) != 2:
-        return None
-    return _template(
-        "list_aggregate("
-        "  list_transform("
-        "    generate_series(1, length(_SUBJECT)),"
-        "    i -> CASE WHEN i = 1 OR contains(_DELIMS, _SUBJECT[i - 1])"
-        "              THEN upper(_SUBJECT[i]) ELSE lower(_SUBJECT[i]) END"
-        "  ), 'string_agg', '')",
-        _SUBJECT=args[0],
-        _DELIMS=args[1],
-    )
-
-
-@_register("Aggregate", "HLL", "HLL_ESTIMATE")
+@_register("Aggregate", "HLL")
 def _hll(args: list[exp.Expression], ctx: DialectContext) -> exp.Expression | None:
     if not args:
         return None
@@ -639,8 +843,7 @@ _CONTEXT_FUNCTIONS: dict[str, Callable[[DialectContext], str]] = {
 }
 
 for _name, _getter in _CONTEXT_FUNCTIONS.items():
-    _BUILDERS[_name] = _context_literal(_getter)
-    _CATEGORIES[_name] = "Context"
+    _add_builder("Context", _name, _context_literal(_getter))
 
 
 # ---------------------------------------------------------------------------
@@ -651,33 +854,12 @@ for _name, _getter in _CONTEXT_FUNCTIONS.items():
 def preprocess_functions(
     expression: exp.Expression, context: DialectContext
 ) -> exp.Expression:
-    """Rewrite registered Snowflake functions into DuckDB expressions."""
-    if isinstance(expression, exp.Initcap) and expression.expression is not None:
-        rewritten = _initcap([expression.this, expression.expression], context)
-        return rewritten if rewritten is not None else expression
+    """Rewrite registered Snowflake functions into DuckDB expressions.
 
-    if isinstance(expression, exp.Hll):
-        counted = _hll(list(expression.expressions) or [expression.this], context)
-        return counted if counted is not None else expression
-
-    if isinstance(expression, exp.ParseUrl):
-        parsed = _parse_url([expression.this], context)
-        return parsed if parsed is not None else expression
-
-    if isinstance(expression, exp.Stuff):
-        # Snowflake INSERT(base, pos, len, insert) parses to exp.Stuff, which
-        # DuckDB has no equivalent for.
-        spliced = _insert(
-            [
-                expression.this,
-                expression.args["start"],
-                expression.args["length"],
-                expression.expression,
-            ],
-            context,
-        )
-        return spliced if spliced is not None else expression
-
+    Typed nodes are matched first: sqlglot models more of Snowflake's function
+    surface with every release, and a name-only lookup silently stops firing
+    when a function graduates from a generic Anonymous call to its own node.
+    """
     if isinstance(expression, exp.Collate):
         return _collate(expression)
 
@@ -686,6 +868,24 @@ def preprocess_functions(
         if rewritten is not None:
             return rewritten
         return expression
+
+    if isinstance(expression, exp.Func):
+        typed_builder = _TYPED_BUILDERS.get(type(expression))
+        if typed_builder is not None:
+            replacement = typed_builder(expression, context)
+            if replacement is not None:
+                return replacement
+
+    node_builder = (
+        _NODE_BUILDERS.get(type(expression))
+        if isinstance(expression, exp.Func)
+        else None
+    )
+    if node_builder is not None:
+        replacement = node_builder(
+            _rewritten_args(_positional_args(expression), context), context
+        )
+        return replacement if replacement is not None else expression
 
     if not isinstance(expression, exp.Anonymous) or not isinstance(
         expression.this, str
@@ -696,8 +896,25 @@ def preprocess_functions(
     if builder is None:
         return expression
 
-    replacement = builder(list(expression.expressions), context)
+    replacement = builder(
+        _rewritten_args(list(expression.expressions), context), context
+    )
     return replacement if replacement is not None else expression
+
+
+def _rewritten_args(
+    args: list[exp.Expression], context: DialectContext
+) -> list[exp.Expression]:
+    """Translate a call's arguments before its builder consumes them.
+
+    sqlglot's `transform` walks parents first and does not descend into a node
+    it has just replaced, so a builder that embeds its arguments in new DuckDB
+    nodes would carry any *nested* Snowflake call through untranslated -
+    `HLL_ESTIMATE(HLL_ACCUMULATE(x))` reached DuckDB with the inner call still
+    spelled the Snowflake way. Each argument is therefore rewritten first;
+    recursion terminates because every step is strictly smaller.
+    """
+    return [arg.transform(preprocess_functions, context=context) for arg in args]
 
 
 def _collate(expression: exp.Collate) -> exp.Expression:

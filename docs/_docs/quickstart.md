@@ -62,6 +62,11 @@ By default, SnowDuck uses an in-memory database. To persist data across sessions
 start_patch_snowflake(db_file="my_data.duckdb")
 ```
 
+Each Snowflake database is a separate DuckDB catalog, stored beside that file
+and named after it — `my_data.duckdb` plus `my_data.ANALYTICS.duckdb` for
+`CREATE DATABASE analytics`. They are re-attached automatically on the next
+run, and `reset=True` removes the whole set.
+
 This is useful for:
 - Jupyter notebooks where you want to keep data between cell executions
 - Development workflows where you want to inspect data

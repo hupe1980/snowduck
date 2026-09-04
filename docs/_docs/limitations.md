@@ -28,10 +28,22 @@ These features work identically to Snowflake:
 - ✅ CREATE TABLE ... CLONE / LIKE, TRANSIENT and TEMPORARY tables
 - ✅ GROUP BY ROLLUP / CUBE / GROUPING SETS, PIVOT / UNPIVOT
 - ✅ `INSERT OVERWRITE INTO` (truncate-and-insert)
+- ✅ `TRUNCATE TABLE [IF EXISTS]`
 - ✅ LIKE ANY / LIKE ALL
 - ✅ SQL UDFs (`CREATE FUNCTION ... AS $$ ... $$`), scalar and table
 - ✅ Sequences (`seq.NEXTVAL`)
 - ✅ `ALTER SESSION SET`/`UNSET`, read back with `SHOW PARAMETERS`
+- ✅ Session-scoped transactions (BEGIN / COMMIT / ROLLBACK across cursors)
+- ✅ `ALTER TABLE ... SWAP WITH`, `CLUSTER BY`, `SET COMMENT`
+- ✅ `ALTER TABLE ... ALTER/MODIFY COLUMN`: `SET DATA TYPE`, `SET`/`DROP NOT NULL`,
+  `SET`/`DROP DEFAULT`, `COMMENT`
+- ✅ Comments on tables, views and columns, inline (`COMMENT = '...'`,
+  `COMMENT '...'`) or standalone (`COMMENT ON`) — what dbt's `persist_docs` writes
+- ✅ `AUTOINCREMENT` and `IDENTITY(start, step)` columns
+- ✅ Stage lifecycle: CREATE / LIST / REMOVE / DROP STAGE, PUT, COPY INTO
+- ✅ `SET`/`UNSET` session variables, `LAST_QUERY_ID()`, `SYSTEM$TYPEOF()`
+- ✅ Declared `VARCHAR(n)` / `CHAR(n)` lengths in INFORMATION_SCHEMA and `internal_size`
+- ✅ `TIMESTAMP_TZ` literals with a numeric UTC offset (`+0200`)
 
 ### Catalog
 
@@ -46,7 +58,13 @@ client, not a degraded result.
 - ✅ SHOW PARAMETERS / VARIABLES
 - ✅ `TERSE`, `LIKE '<pattern>'`, `STARTS WITH '<prefix>'`, `LIMIT <n> [ FROM '<name>' ]`
 - ✅ Per-database `INFORMATION_SCHEMA`: DATABASES, SCHEMATA, TABLES, VIEWS,
-  COLUMNS, FUNCTIONS, SEQUENCES
+  COLUMNS, FUNCTIONS, SEQUENCES, TABLE_CONSTRAINTS, KEY_COLUMN_USAGE,
+  REFERENTIAL_CONSTRAINTS, INFORMATION_SCHEMA_CATALOG_NAME, APPLICABLE_ROLES,
+  ENABLED_ROLES
+- ⚠️ `INFORMATION_SCHEMA` views for object kinds with no local equivalent
+  (TABLE_PRIVILEGES, USAGE_PRIVILEGES, OBJECT_PRIVILEGES, VIEW_TABLE_USAGE,
+  EXTERNAL_TABLES, FILE_FORMATS, PROCEDURES, LOAD_HISTORY) return an **empty
+  result with the right columns** rather than an error
 - ⚠️ Object types with no local equivalent (DYNAMIC TABLES, ICEBERG TABLES,
   EXTERNAL TABLES, PROCEDURES, STREAMS, TASKS, PIPES, FILE FORMATS, GRANTS,
   PRIMARY/UNIQUE/IMPORTED KEYS, TRANSACTIONS) return an **empty result with the
@@ -61,7 +79,10 @@ client, not a degraded result.
 - ✅ BINARY
 
 ### Functions
-- ✅ 100+ string, date, numeric, aggregate functions
+- ✅ 150+ string, date, numeric, aggregate functions
+- ✅ The full VARIANT accessor and predicate families (`AS_*`, `IS_*`), with
+  Snowflake's type-checking semantics rather than a coercing cast
+- ✅ `TO_CHAR` / `TO_VARCHAR` numeric format models
 - ✅ Window functions
 - ✅ JSON/VARIANT functions
 - ✅ Array functions
@@ -79,9 +100,12 @@ These features work but with limitations:
   are the epoch, and every owner is `SYSADMIN`
 
 ### ALTER TABLE
-- ⚠️ ADD COLUMN, DROP COLUMN work
+- ✅ ADD COLUMN, DROP COLUMN, RENAME COLUMN, RENAME TO
+- ✅ ALTER/MODIFY COLUMN: SET DATA TYPE, SET/DROP NOT NULL, SET/DROP DEFAULT, COMMENT
 - ⚠️ Clustering keys are ignored
-- ⚠️ Some advanced options not supported
+- ⚠️ `ADD`/`DROP CONSTRAINT` are accepted and ignored: Snowflake records
+  constraints as metadata and does not enforce them, and DuckDB has no
+  `DROP CONSTRAINT` at all
 
 ### COPY INTO
 - ⚠️ Works with local stage directory
@@ -187,6 +211,25 @@ Snowflake. The places where Snowflake differs from a naive DuckDB translation
 are emulated explicitly and covered by the conformance suite - see
 [Snowflake Semantics](snowflake-semantics).
 
+### Parser Warnings
+
+sqlglot logs a warning whenever it cannot model a statement and degrades it to
+an opaque `Command`. SnowDuck handles several of those deliberately - the whole
+`SHOW` family and Snowflake's multi-column `ALTER TABLE ... ALTER <col>
+COMMENT` are re-read by their own scanners - so those warnings are held back
+during parsing and dropped once the statement is recognised. A fallback SnowDuck
+does *not* handle still logs, so nothing is hidden:
+
+```python
+cur.execute("SHOW USER FUNCTIONS")   # handled: no warning
+cur.execute("CREATE TASK t ...")     # unhandled: warning is replayed
+```
+
+The same rule applies to sqlglot's generator: it logs
+*"Unsupported ALTER COLUMN syntax"* for clauses it emits correctly anyway, so
+those statements are rendered by SnowDuck instead and stay quiet. This is
+pinned by `tests/conformance/test_ddl_metadata.py::TestParserWarnings`.
+
 ### Known Remaining Gaps
 
 | Area | Difference |
@@ -202,9 +245,28 @@ are emulated explicitly and covered by the conformance suite - see
 | `SHOW USER FUNCTIONS` `arguments` | Reports `VARIANT` for every parameter and return type: a UDF becomes a DuckDB macro, which has no typed signature |
 | `SHOW STAGES` | Lists every directory under `SNOWDUCK_STAGE_DIR`, regardless of which database or schema the stage was created in |
 | `ARRAY` / `OBJECT` / `VARIANT` columns | All three are stored as JSON, so `INFORMATION_SCHEMA.COLUMNS` reports `VARIANT` for all of them |
+| `ALTER TABLE ... SWAP WITH` | Three renames rather than an atomic swap: a concurrent reader can observe the intermediate state |
+| `CLUSTER BY`, `DATA_RETENTION_TIME_IN_DAYS` | Accepted and ignored - Snowflake storage hints with no local meaning |
+| `BEGIN NAME <name>` | Named transactions are not parsed; use a bare `BEGIN` |
+| `ALTER TABLE ... ALTER COLUMN` multi-column form | Only the `COMMENT` clause is recognised in the multi-column form (which is what dbt's `persist_docs` emits); combining other clauses across several columns in one statement is not |
+| `LAST_QUERY_ID()` | Only the most recent statement is tracked, so the optional offset argument is ignored |
+| `TIMESTAMP_LTZ` vs `TIMESTAMP_TZ` | Both map to DuckDB's `TIMESTAMPTZ`, so INFORMATION_SCHEMA reports `TIMESTAMP_TZ` for either |
+| A schema named `MAIN` | DuckDB owns an internal schema called `main` in every attached database that cannot be dropped or renamed, so Snowflake's `MAIN` is stored there. SnowDuck records the `CREATE SCHEMA` and reports the name as `MAIN`, but a schema explicitly quoted as `"main"` is indistinguishable from it |
 | `TEMPORARY` tables and views | A qualified `CREATE TEMPORARY <rel> <db>.<schema>.<name>` becomes a permanent relation: DuckDB keeps temporary objects in its own `temp` catalog and rejects any other qualification |
 | `TRANSIENT` | Accepted and ignored - it only removes Fail-safe, which SnowDuck does not have |
 | `TO_TIME` | Casts only; DuckDB has no `TIMESTAMP WITH TIME ZONE` → `TIME` cast, so a timestamp argument is not supported |
+| `AS_DATE` / `AS_TIME` / `AS_TIMESTAMP_*` / `AS_BINARY` | A cast, not a type check like the rest of the `AS_` family: JSON has no such type to check against, so the VARIANT holds a string. `IS_DATE` and friends answer "a string that reads back as that type" |
+| `TO_CHAR` numeric format models | `X` (hexadecimal) and the locale-aware `TME` are not modelled; a model using them is left to sqlglot, which drops it |
+| `COLLATION` | Always NULL - nothing local carries a stored collation, which is what Snowflake reports for an uncollated expression |
+| `HLL_ACCUMULATE` / `HLL_COMBINE` / `HLL_ESTIMATE` | The sketch is the set of distinct values, so the estimate is exact rather than approximate, and a sketch is not portable to Snowflake. `HLL` itself is DuckDB's `approx_count_distinct` |
+| `GET_DDL` | Reports DuckDB's rendering of the object rather than Snowflake DDL, and reads back as NULL for an object that does not exist, where Snowflake raises. Only TABLE, VIEW, SEQUENCE and FUNCTION |
+| `OBJECT_CONSTRUCT(*)` | Needs exactly one `FROM` source; over a join it raises, because DuckDB has no expression that spans both sides of one |
+| Constraint names | `INFORMATION_SCHEMA.TABLE_CONSTRAINTS` reports DuckDB's generated name (`T_ID_PKEY`), not Snowflake's `SYS_CONSTRAINT_<uuid>` |
+| `CREATE SECURE VIEW` | Accepted and ignored - the view is created, but `is_secure` still reports false |
+| `CREATE MATERIALIZED VIEW` | Becomes a regular view, so it reads correctly but is not maintained incrementally and appears under `SHOW VIEWS` rather than `SHOW MATERIALIZED VIEWS` |
+| `INSERT ALL` / `INSERT FIRST` | Multi-table insert is not parsed |
+| `PARSE_XML` / `XMLGET` / `TO_XML` | XML is not emulated; `GEOGRAPHY` and `GEOMETRY` likewise |
+| Identifiers colliding with DuckDB keywords | An unquoted name DuckDB reserves and Snowflake does not (`AT`, for instance) fails to parse; quote it |
 
 ## Recommendations
 
